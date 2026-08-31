@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Default-vs-tuned kernel latency comparison for vLLM's dense W8A8 block-FP8
-Triton GEMM kernel.
+Default-vs-tuned kernel comparison for vLLM's dense W8A8 block-FP8 Triton GEMM
+kernel: latency, and whether the two configs actually agree numerically.
 
 Why this exists: neither of vLLM's own two relevant scripts do this.
 `benchmarks/kernels/benchmark_w8a8_block_fp8.py` (the tuner) searches for the
@@ -15,7 +15,7 @@ import json
 
 import torch
 
-from _vendored_matmul_timing import benchmark_config
+from _vendored_matmul_timing import benchmark_config, w8a8_block_matmul
 from vllm.utils.platform_utils import get_device_name_as_file_name
 
 DEFAULT_CONFIG = {
@@ -79,8 +79,8 @@ def main():
             tuned_configs = {int(k): v for k, v in json.load(f).items()}
 
         print(f"\n### N={N}, K={K}, device={device_name}")
-        print("| batch size (M) | default (us) | tuned (us) | speedup |")
-        print("|---:|---:|---:|---:|")
+        print("| batch size (M) | default (us) | tuned (us) | speedup | max output diff |")
+        print("|---:|---:|---:|---:|---:|")
         for M in BATCH_SIZES:
             A, B, As, Bs = make_tensors(M, N, K, BLOCK_N, BLOCK_K)
             default_us = benchmark_config(
@@ -92,7 +92,17 @@ def main():
                 num_iters=NUM_ITERS,
             )
             speedup = (default_us - tuned_us) / default_us * 100
-            print(f"| {M} | {default_us:.2f} | {tuned_us:.2f} | {speedup:+.1f}% |")
+
+            # Sanity check: result should stay the same.
+            out_default = w8a8_block_matmul(
+                A, B, As, Bs, [BLOCK_N, BLOCK_K], DEFAULT_CONFIG, OUT_DTYPE
+            )
+            out_tuned = w8a8_block_matmul(
+                A, B, As, Bs, [BLOCK_N, BLOCK_K], tuned_configs[M], OUT_DTYPE
+            )
+            max_diff = (out_default.float() - out_tuned.float()).abs().max().item()
+
+            print(f"| {M} | {default_us:.2f} | {tuned_us:.2f} | {speedup:+.1f}% | {max_diff:.4f} |")
 
 
 if __name__ == "__main__":
