@@ -46,7 +46,7 @@ SHAPES = [
 BLOCK_N, BLOCK_K = 128, 128
 OUT_DTYPE = torch.bfloat16
 TUNED_DIR = "./tuned-configs"
-NUM_ITERS = 50  # more than tune()'s internal 10, cheap since only ~180 calls total
+NUM_ITERS = 100
 
 
 def make_tensors(M, N, K, block_n, block_k):
