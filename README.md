@@ -237,7 +237,7 @@ python3 -m vllm.entrypoints.openai.api_server \
     --tensor-parallel-size=2 --max-model-len=8192 --reasoning-parser=qwen3 \
     --enable-auto-tool-choice --tool-call-parser=qwen3_coder \
     --max-num-seqs=64
-# env: HF_HOME=/tmp/hf_home PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True HOME=/tmp
+# env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
 
 Benchmarked using `vllm bench serve`.
