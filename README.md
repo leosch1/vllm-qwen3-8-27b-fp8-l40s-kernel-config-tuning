@@ -8,7 +8,7 @@ Environment: `vllm/vllm-openai:v0.27.1`, 2x NVIDIA L40S.
 
 ## Background
 
-### Why vLLM uses a Triton kernel here
+### Why vLLM uses a Triton kernel for this model + GPU
 
 `Qwen/Qwen3.8-27B-FP8` ships FP8-quantized weights with block-wise scaling.
 To run this model on NVIDIA L40S GPUs, vLLM chooses to use a Triton kernel for GEMM.
