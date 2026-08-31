@@ -1,0 +1,65 @@
+# Reproduces the kernel-level default-vs-tuned results: clones this repo,
+# then runs compare_default_vs_tuned.py against the tuned-configs/*.json
+#
+# Usage: kubectl apply -f compare-job.yaml
+# Once the pod reaches the "sleeping" log line, read the results and clean up:
+#   kubectl logs <pod>
+#   kubectl delete -f compare-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-fp8-dense-compare
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      initContainers:
+        - name: clone-repo
+          image: docker.io/alpine/git:latest
+          args:
+            - clone
+            - --depth=1
+            - https://github.com/leosch1/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning.git
+            - /repo
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+      containers:
+        - name: compare
+          # Already has vllm==0.27.1 installed, so compare_default_vs_tuned.py's
+          # `from vllm...` imports work with no extra pip install.
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          workingDir: /repo
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              python3 compare_default_vs_tuned.py
+              echo "=== done, sleeping so logs can be read ==="
+              sleep infinity
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "6"
+              memory: 28Gi
+              nvidia.com/gpu: "1"
+      volumes:
+        - name: repo
+          emptyDir: {}

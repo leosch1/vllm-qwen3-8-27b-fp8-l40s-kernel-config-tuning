@@ -1,0 +1,71 @@
+# Reproduces tuned-configs/*.json from scratch: clones leosch1/vllm's
+# qwen3-8-27b-fp8-dense-tuning branch (v0.27.1 + the shape patch to
+# get_weight_shapes(), see benchmarks/kernels/benchmark_w8a8_block_fp8.py
+# there), then runs the tuner.
+#
+# Usage: kubectl apply -f tune-job.yaml
+# Once the pod reaches the "sleeping" log line, copy the result out and clean up:
+#   kubectl cp <pod>:/repo/tuned-configs ./tuned-configs
+#   kubectl delete -f tune-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-fp8-dense-tune
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      initContainers:
+        - name: clone-repo
+          image: docker.io/alpine/git:latest
+          args:
+            - clone
+            - --depth=1
+            - --branch=qwen3-8-27b-fp8-dense-tuning
+            - https://github.com/leosch1/vllm.git
+            - /repo
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+      containers:
+        - name: tune
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          workingDir: /repo/benchmarks/kernels
+          env:
+            # OpenShift/arbitrary-UID clusters: $HOME defaults to "/", and some
+            # import paths os.makedirs("$HOME/.cache/...") and fail otherwise.
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              python3 benchmark_w8a8_block_fp8.py \
+                  --tp-size 2 --input-type fp8 --out-dtype bfloat16 \
+                  --block-n 128 --block-k 128 --save-path /repo/tuned-configs
+              ls -la /repo/tuned-configs
+              echo "=== done, sleeping so tuned-configs/ can be copied out ==="
+              sleep infinity
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "6"
+              memory: 28Gi
+              nvidia.com/gpu: "1"
+      volumes:
+        - name: repo
+          emptyDir: {}
