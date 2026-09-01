@@ -9,6 +9,17 @@ fastest config and discards the timing once it picks a winner.
 `benchmarks/kernels/benchmark_block_fp8_gemm.py` is designed to do a real
 before/after comparison through vLLM's production code path, but is broken on
 vllm/vllm-openai:v0.27.1.
+
+BLOCK_SIZE_M/N/K, GROUP_SIZE_M, num_warps, and num_stages only change how the
+GEMM is tiled and scheduled on the GPU, not the math it computes. So for the
+same inputs, default and tuned config should produce the same output.
+
+Also covers batch sizes the tuner never saw (HELD_OUT_BATCH_SIZES): mirrors
+vLLM's actual lookup (get_w8a8_block_fp8_configs in fp8_utils.py) --
+configs[min(configs.keys(), key=lambda x: abs(x - M))] -- then times that
+selected config at the true, off-anchor M. This is the generalization check:
+whether nearest-anchor lookup ever loses to the uniform default in between
+the 18 batch sizes actually tuned for.
 """
 
 import json
@@ -33,6 +44,12 @@ BATCH_SIZES = [
     512, 1024, 1536, 2048, 3072, 4096,
 ]
 
+# Deliberately between BATCH_SIZES' anchors, covering the same overall range.
+HELD_OUT_BATCH_SIZES = [
+    3, 6, 12, 20, 28, 40, 56, 80, 112, 160, 200,
+    384, 768, 1280, 1792, 2560, 3584,
+]
+
 # Qwen/Qwen3.8-27B-FP8, tensor_parallel_size=2, NVIDIA L40S dense W8A8 block-FP8 shapes
 # Captured from the live predictor pod's "Using default..." warnings.
 # Cross-checked against the model's config.json.
@@ -46,7 +63,7 @@ SHAPES = [
 BLOCK_N, BLOCK_K = 128, 128
 OUT_DTYPE = torch.bfloat16
 TUNED_DIR = "./tuned-configs"
-NUM_ITERS = 100
+NUM_ITERS = 500
 
 
 def make_tensors(M, N, K, block_n, block_k):
@@ -77,32 +94,45 @@ def main():
         )
         with open(json_path) as f:
             tuned_configs = {int(k): v for k, v in json.load(f).items()}
+        anchors = list(tuned_configs.keys())
+
+        points = [(M, "anchor") for M in BATCH_SIZES]
+        points += [(M, "held-out") for M in HELD_OUT_BATCH_SIZES]
+        points.sort()
 
         print(f"\n### N={N}, K={K}, device={device_name}")
-        print("| batch size (M) | default (us) | tuned (us) | speedup | max output diff |")
-        print("|---:|---:|---:|---:|---:|")
-        for M in BATCH_SIZES:
+        print("| M | type | nearest anchor | default (us) | tuned (us) | speedup | max output diff |")
+        print("|---:|---|---:|---:|---:|---:|---:|")
+        for M, ptype in points:
+            if ptype == "anchor":
+                nearest = M
+            else:
+                nearest = min(anchors, key=lambda x: abs(x - M))
+            selected_config = tuned_configs[nearest]
+
             A, B, As, Bs = make_tensors(M, N, K, BLOCK_N, BLOCK_K)
             default_us = benchmark_config(
                 A, B, As, Bs, [BLOCK_N, BLOCK_K], DEFAULT_CONFIG, OUT_DTYPE,
                 num_iters=NUM_ITERS,
             )
             tuned_us = benchmark_config(
-                A, B, As, Bs, [BLOCK_N, BLOCK_K], tuned_configs[M], OUT_DTYPE,
+                A, B, As, Bs, [BLOCK_N, BLOCK_K], selected_config, OUT_DTYPE,
                 num_iters=NUM_ITERS,
             )
             speedup = (default_us - tuned_us) / default_us * 100
 
-            # Sanity check: result should stay the same.
             out_default = w8a8_block_matmul(
                 A, B, As, Bs, [BLOCK_N, BLOCK_K], DEFAULT_CONFIG, OUT_DTYPE
             )
             out_tuned = w8a8_block_matmul(
-                A, B, As, Bs, [BLOCK_N, BLOCK_K], tuned_configs[M], OUT_DTYPE
+                A, B, As, Bs, [BLOCK_N, BLOCK_K], selected_config, OUT_DTYPE
             )
             max_diff = (out_default.float() - out_tuned.float()).abs().max().item()
 
-            print(f"| {M} | {default_us:.2f} | {tuned_us:.2f} | {speedup:+.1f}% | {max_diff:.4f} |")
+            print(
+                f"| {M} | {ptype} | {nearest} | {default_us:.2f} | {tuned_us:.2f} "
+                f"| {speedup:+.1f}% | {max_diff:.4f} |"
+            )
 
 
 if __name__ == "__main__":
