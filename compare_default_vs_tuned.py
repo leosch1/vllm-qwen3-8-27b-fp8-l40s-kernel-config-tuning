@@ -63,7 +63,7 @@ SHAPES = [
 BLOCK_N, BLOCK_K = 128, 128
 OUT_DTYPE = torch.bfloat16
 TUNED_DIR = "./tuned-configs"
-NUM_ITERS = 500
+NUM_ITERS = 1000
 
 
 def make_tensors(M, N, K, block_n, block_k):
