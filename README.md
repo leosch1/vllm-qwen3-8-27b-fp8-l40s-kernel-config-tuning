@@ -4,7 +4,7 @@ Tuning vLLM's dense W8A8 block-FP8 Triton GEMM kernel for [`Qwen/Qwen3.8-27B-FP8
 
 Backs a PR to [vllm-project/vllm](https://github.com/vllm-project/vllm) contributing the resulting configs upstream: _TODO: link once opened_.
 
-**For the full story — including a real regression the first tuning pass introduced under load, why, and how it's fixed — see [the writeup](./blog/index.html).** This README covers the current, correct methodology only: the patch needed to reproduce `tuned-configs/`, and the evidence it holds up both at the kernel level and end-to-end. The complete investigation, with every intermediate experiment (including the ones that didn't pan out), is archived in [`experiments/`](./experiments/).
+**For the full story — including a real regression the first tuning pass introduced under load, why, and how it's fixed — see [the writeup](https://leosch1.github.io/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning/blog/).** This README covers the current, correct methodology only: the patch needed to reproduce `tuned-configs/`, and the evidence it holds up both at the kernel level and end-to-end. The complete investigation, with every intermediate experiment (including the ones that didn't pan out), is archived in [`experiments/`](./experiments/).
 
 Environment: `vllm/vllm-openai:v0.27.1`, 2x NVIDIA L40S.
 
@@ -43,7 +43,7 @@ WARNING [fp8_utils.py:851] Using default W8A8 Block FP8 kernel config. Performan
 If a JSON file matching that exact path exists, vLLM uses it instead, picking whichever batch-size entry is closest to the actual request size.
 vLLM already ships many such files for popular GPU/shape combinations, but has currently none for `Qwen/Qwen3.8-27B-FP8` on L40S. This project fills that gap.
 
-Using vLLM's own tuning script, a grid search over the Triton launch parameters (`BLOCK_SIZE_M/N/K`, `GROUP_SIZE_M`, `num_warps`, `num_stages`) was run per GEMM shape and batch size, keeping the fastest combination for each. A first pass at this looked like a clean win in isolation but turned out to regress real, concurrent serving at higher load — traced to the tuner's own benchmarking loop implicitly assuming a warm L2 cache that real serving never has. **The methodology below is the corrected version**, which fixes that assumption in the tuner itself rather than patching around it. The regression, its root cause, and the fix are the subject of [the blog post](./blog/index.html); this README just documents the end state.
+Using vLLM's own tuning script, a grid search over the Triton launch parameters (`BLOCK_SIZE_M/N/K`, `GROUP_SIZE_M`, `num_warps`, `num_stages`) was run per GEMM shape and batch size, keeping the fastest combination for each. A first pass at this looked like a clean win in isolation but turned out to regress real, concurrent serving at higher load — traced to the tuner's own benchmarking loop implicitly assuming a warm L2 cache that real serving never has. **The methodology below is the corrected version**, which fixes that assumption in the tuner itself rather than patching around it. The regression, its root cause, and the fix are the subject of [the blog post](https://leosch1.github.io/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning/blog/); this README just documents the end state.
 
 ## Config parameters
 
@@ -178,6 +178,6 @@ The first tuning pass decayed through zero and went negative above `c=48` — th
 
 ## More detail
 
-- **[The blog post](./blog/index.html)** — the full investigation: how the regression was found, ruled-out hypotheses, the root cause, and the fix. Written for a reader who wants the reasoning, not just the result.
+- **[The blog post](https://leosch1.github.io/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning/blog/)** — the full investigation: how the regression was found, ruled-out hypotheses, the root cause, and the fix. Written for a reader who wants the reasoning, not just the result.
 - **[`experiments/`](./experiments/)** — a curated, numbered walkthrough (01–06) matching the blog's structure, each step self-contained and reproducible.
-- **[`experiments/archive/`](./experiments/archive/)** — every experiment actually run during this project, including dead ends and corrected claims, with an [overview page](./experiments/archive/overview.html) narrating all of it.
+- **[`experiments/archive/`](./experiments/archive/)** — every experiment actually run during this project, including dead ends and corrected claims, with an [overview page](https://leosch1.github.io/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning/experiments/archive/overview.html) narrating all of it.
