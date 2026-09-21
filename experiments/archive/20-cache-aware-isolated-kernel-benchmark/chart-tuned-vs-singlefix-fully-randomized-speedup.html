@@ -1,0 +1,187 @@
+<title>Fully-Randomized Tuned vs. Singlefix Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, singlefix vs. original tuned, FULLY RANDOMIZED launch order</h1>
+  <p class="sub">Same 175-point grid as this experiment's other charts, but every one of the 700,000 launches needed (5 shapes &times; 35 M-points &times; 2 configs &times; 2000 iterations) is generated as one flat list, shuffled into a single random order, and executed strictly in that order &mdash; bucketed back by (shape, M, config) label only after all launches complete. Every prior design here (sequential blocks, then fine-grained same-tensor interleaving) turned out to carry its own confound (block-level drift, then a confirmed cache-warming order bias); full randomization sidesteps guessing the confound's structure entirely, since no time-varying nuisance factor can correlate with a launch's label once launches from every combination are scattered uniformly across the whole run.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">By far the cleanest result in this whole investigation. Null-point noise (all 173 points whose nearest anchor isn't the one that changed) collapses to stdev <b>0.34pp</b> &mdash; a ~7x tighter floor than the sequential-block design's 2.43pp &mdash; with max|noise| only 1.60pp anywhere in the entire sweep. Against that floor, <code>gate_up_proj</code> M=2048 (anchor 2048, the only real config difference) reads <b>+8.1%, 23.8 standard deviations from the null mean</b>; its held-out neighbor M=2560 (same anchor) reads +4.6% (13.5 SD). Zero of the other 173 points come anywhere close. This single run is dramatically more trustworthy than any sequential-block or interleaved estimate produced earlier &mdash; though as a single run of this design, it should still be repeated a few times before treating +8.1% as final.</p>
+</div>
+
+<script>
+const DATA = {
+  "gate_up_proj": [[1,0.1],[2,-0.1],[3,-0.4],[4,-0.2],[6,-0.2],[8,0.1],[12,0.4],[16,-0.3],[20,-0.3],[24,-0.1],[28,0.3],[32,0.1],[40,0.1],[48,0.3],[56,-0.5],[64,-0.5],[80,0.7],[96,-0.2],[112,-0.1],[128,-0.6],[160,0.2],[200,-0.1],[256,-0.0],[384,0.0],[512,0.0],[768,-0.1],[1024,-0.0],[1280,-0.1],[1536,-0.1],[1792,0.1],[2048,8.1],[2560,4.6],[3072,0.0],[3584,-0.0],[4096,-0.1]],
+  "in_proj_qkvz": [[1,0.1],[2,0.3],[3,-0.1],[4,-0.6],[6,-0.2],[8,-0.2],[12,-0.0],[16,1.6],[20,-0.2],[24,0.2],[28,0.2],[32,0.3],[40,-0.3],[48,0.3],[56,-0.6],[64,0.0],[80,0.2],[96,-0.8],[112,0.2],[128,0.2],[160,-0.3],[200,-0.1],[256,-0.6],[384,-0.3],[512,-0.1],[768,-0.1],[1024,0.0],[1280,0.0],[1536,0.0],[1792,0.0],[2048,0.0],[2560,0.1],[3072,-0.1],[3584,-0.0],[4096,-0.1]],
+  "qkv_proj": [[1,-0.3],[2,0.2],[3,0.2],[4,-0.3],[6,0.7],[8,-0.2],[12,-0.0],[16,0.1],[20,-0.2],[24,-0.2],[28,0.5],[32,-0.1],[40,-0.7],[48,0.1],[56,0.8],[64,0.2],[80,0.1],[96,0.1],[112,0.4],[128,0.2],[160,0.2],[200,0.5],[256,-0.4],[384,0.2],[512,-0.1],[768,-0.1],[1024,0.0],[1280,0.0],[1536,-0.0],[1792,-0.0],[2048,-0.0],[2560,-0.1],[3072,-0.0],[3584,0.0],[4096,0.1]],
+  "down_proj": [[1,-0.1],[2,0.3],[3,0.4],[4,0.0],[6,-0.0],[8,0.1],[12,0.5],[16,0.3],[20,0.4],[24,0.4],[28,-0.2],[32,0.3],[40,0.2],[48,0.2],[56,0.3],[64,-0.4],[80,-0.1],[96,0.5],[112,-0.0],[128,-0.3],[160,0.3],[200,0.1],[256,0.1],[384,-0.2],[512,-0.1],[768,0.0],[1024,0.0],[1280,0.3],[1536,-0.1],[1792,-0.1],[2048,-0.2],[2560,-0.0],[3072,0.0],[3584,-0.0],[4096,0.0]],
+  "out_proj": [[1,0.3],[2,0.7],[3,1.2],[4,0.9],[6,-0.2],[8,0.1],[12,-0.3],[16,0.1],[20,-0.8],[24,-0.0],[28,-0.0],[32,0.8],[40,0.5],[48,0.0],[56,-0.2],[64,-0.6],[80,-0.9],[96,0.7],[112,-0.4],[128,-0.2],[160,0.7],[200,0.4],[256,-0.1],[384,-0.1],[512,-0.0],[768,-0.2],[1024,-0.0],[1280,0.1],[1536,-0.0],[1792,0.1],[2048,0.2],[2560,-0.1],[3072,0.3],[3584,-0.2],[4096,-0.1]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SHAPES.forEach(([name, color]) => {
+  const data = DATA[name];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup vs. tuned</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

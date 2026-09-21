@@ -1,0 +1,212 @@
+<title>Sync vs. No-Sync Kernel Dispatch</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+.panel-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 0 0 8px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, default vs. tuned &mdash; does removing per-iteration sync change the answer?</h1>
+  <p class="sub">Both panels use the identical fully-randomized, cross-shape, cache-cycling design (<a href="./chart-fully-randomized.html">Run 3 there</a>): 700,000 launches, 5 shapes &times; 35 M-points &times; 2 configs &times; 2000 iterations, uniformly random weight-copy per launch. Every isolated benchmark in this project &mdash; including that one &mdash; calls <code>torch.accelerator.synchronize()</code> before every single kernel launch, forcing the GPU to fully drain between calls (inherited verbatim from vLLM's own tuner script). Real serving never does this: a decode step replays as a CUDA graph, dozens of kernels back-to-back on one stream with zero host sync in between. The bottom panel removes that per-iteration sync entirely &mdash; kernels queue back-to-back, timed via CUDA events, with a single synchronize() only after all 700,000 launches are queued &mdash; to test whether that difference was hiding the real-serving regression.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="panel-title">With per-iteration sync (original methodology)</div>
+  <div class="chart-wrap" id="chart-wrap-1"></div>
+  <div class="callout" style="border-left:3px solid var(--out-proj); background:var(--surface-2); padding:10px 14px; border-radius:0 6px 6px 0; font-size:12.5px; color:var(--text-secondary); margin:14px 0 0;">
+  Overall mean <b>+6.5%</b>, median +6.6%. <code>gate_up_proj</code> M=2048 (the point that shows the real-serving regression): <b>+0.7%</b> &mdash; flat.
+  </div>
+
+  <div class="panel-title" style="margin-top:28px;">Without per-iteration sync &mdash; kernels queued back-to-back</div>
+  <div class="chart-wrap" id="chart-wrap-2"></div>
+  <div class="callout" style="border-left:3px solid var(--gate-up-proj); background:var(--surface-2); padding:10px 14px; border-radius:0 6px 6px 0; font-size:12.5px; color:var(--text-secondary); margin:14px 0 0;">
+  <b style="color:var(--text-primary);">A real effect, but not the one we were looking for.</b> Overall mean nearly doubles to <b>+12.8%</b> (median +12.3%) &mdash; broadly, across almost every point, not one outlier &mdash; so removing artificial per-iteration idle gaps genuinely does change tuned's average isolated advantage. But at <code>gate_up_proj</code> M=2048 specifically, the point that actually matters, it moves the <em>wrong</em> way for the hypothesis: <b>+0.7% &rarr; +1.2%</b>, still flat, no hint of the real-serving regression. The negative anchors nearby (M=512: &minus;9.6%&rarr;&minus;12.8%, M=1024: &minus;3.5%&rarr;&minus;5.6%) got modestly <em>more</em> negative, while M=2048 itself stayed pinned near zero either way. Per-iteration sync removal is a real, separate effect on the overall level &mdash; it isn't what's hiding the M=2048-specific regression.
+  </div>
+</div>
+
+<script>
+const DATA1 = {
+  "gate_up_proj": [[1,15.1],[2,2.2],[3,0.8],[4,1.5],[6,1.0],[8,0.1],[12,0.4],[16,0.5],[20,-1.6],[24,0.9],[28,1.0],[32,0.0],[40,-13.2],[48,-0.6],[56,0.1],[64,-0.5],[80,-0.9],[96,-1.0],[112,-1.1],[128,-0.8],[160,5.3],[200,5.1],[256,5.6],[384,9.6],[512,-9.6],[768,-5.4],[1024,-3.5],[1280,-2.1],[1536,-0.5],[1792,0.2],[2048,0.7],[2560,3.8],[3072,6.5],[3584,6.5],[4096,5.8]],
+  "in_proj_qkvz": [[1,19.1],[2,9.9],[3,8.4],[4,6.9],[6,6.6],[8,4.1],[12,4.6],[16,5.7],[20,3.9],[24,6.6],[28,6.2],[32,7.3],[40,7.9],[48,4.6],[56,4.9],[64,6.2],[80,-10.9],[96,1.6],[112,2.4],[128,4.5],[160,-9.1],[200,3.7],[256,2.3],[384,3.0],[512,5.4],[768,6.3],[1024,7.7],[1280,7.5],[1536,7.0],[1792,6.9],[2048,7.7],[2560,5.8],[3072,12.0],[3584,11.6],[4096,11.1]],
+  "qkv_proj": [[1,20.2],[2,11.8],[3,9.2],[4,10.4],[6,9.8],[8,7.9],[12,8.8],[16,9.1],[20,8.2],[24,7.2],[28,7.1],[32,7.4],[40,7.4],[48,5.0],[56,4.9],[64,7.4],[80,6.8],[96,6.4],[112,6.8],[128,5.0],[160,-18.5],[200,4.0],[256,6.9],[384,2.4],[512,3.9],[768,5.9],[1024,5.3],[1280,10.9],[1536,9.0],[1792,7.9],[2048,7.1],[2560,10.8],[3072,8.9],[3584,6.9],[4096,11.6]],
+  "down_proj": [[1,25.0],[2,17.2],[3,16.1],[4,18.1],[6,16.4],[8,17.7],[12,16.3],[16,15.2],[20,15.0],[24,15.8],[28,15.7],[32,15.8],[40,15.5],[48,14.5],[56,14.5],[64,13.7],[80,13.9],[96,15.1],[112,14.2],[128,12.9],[160,12.3],[200,6.6],[256,6.6],[384,-4.5],[512,8.3],[768,-9.0],[1024,6.5],[1280,11.8],[1536,7.9],[1792,12.6],[2048,10.3],[2560,11.9],[3072,13.2],[3584,14.3],[4096,7.4]],
+  "out_proj": [[1,21.4],[2,10.5],[3,8.6],[4,8.8],[6,7.0],[8,6.9],[12,7.5],[16,6.7],[20,4.7],[24,7.9],[28,8.9],[32,8.0],[40,6.0],[48,5.2],[56,6.5],[64,4.6],[80,5.2],[96,6.6],[112,4.2],[128,5.9],[160,-2.6],[200,3.1],[256,3.8],[384,-0.5],[512,6.6],[768,-0.9],[1024,6.3],[1280,-0.3],[1536,5.0],[1792,9.5],[2048,6.0],[2560,7.2],[3072,9.3],[3584,10.3],[4096,4.7]]
+};
+
+const DATA2 = {
+  "gate_up_proj": [[1,22.3],[2,6.4],[3,4.3],[4,5.9],[6,3.3],[8,2.5],[12,3.1],[16,3.9],[20,2.2],[24,2.9],[28,3.9],[32,3.2],[40,-14.9],[48,1.4],[56,1.4],[64,1.4],[80,-0.1],[96,-0.2],[112,-0.7],[128,-0.4],[160,9.6],[200,9.4],[256,9.0],[384,11.6],[512,-12.8],[768,-8.1],[1024,-5.6],[1280,-3.8],[1536,-0.7],[1792,0.2],[2048,1.2],[2560,3.5],[3072,6.3],[3584,6.2],[4096,4.8]],
+  "in_proj_qkvz": [[1,31.0],[2,17.7],[3,16.9],[4,14.7],[6,14.1],[8,12.4],[12,12.7],[16,14.2],[20,11.7],[24,15.1],[28,14.9],[32,14.5],[40,14.3],[48,13.7],[56,13.6],[64,13.3],[80,-9.9],[96,8.1],[112,7.9],[128,8.9],[160,-8.4],[200,10.3],[256,9.6],[384,5.5],[512,4.8],[768,5.3],[1024,8.6],[1280,8.1],[1536,7.5],[1792,7.2],[2048,5.2],[2560,2.7],[3072,9.6],[3584,8.9],[4096,8.5]],
+  "qkv_proj": [[1,33.2],[2,22.4],[3,20.7],[4,20.2],[6,20.3],[8,18.5],[12,18.2],[16,21.0],[20,19.3],[24,18.8],[28,18.1],[32,18.7],[40,16.9],[48,14.5],[56,14.7],[64,17.6],[80,13.5],[96,16.2],[112,15.3],[128,12.6],[160,-19.5],[200,12.2],[256,11.8],[384,3.5],[512,4.3],[768,4.9],[1024,5.2],[1280,12.3],[1536,10.2],[1792,8.6],[2048,7.6],[2560,11.3],[3072,8.6],[3584,6.2],[4096,9.4]],
+  "down_proj": [[1,38.3],[2,30.2],[3,29.3],[4,29.8],[6,29.2],[8,29.5],[12,28.8],[16,28.6],[20,26.7],[24,27.7],[28,27.6],[32,29.1],[40,27.9],[48,26.6],[56,26.0],[64,26.3],[80,25.0],[96,25.8],[112,24.1],[128,21.9],[160,22.2],[200,12.7],[256,12.8],[384,-2.0],[512,12.4],[768,-8.8],[1024,7.4],[1280,12.8],[1536,9.1],[1792,14.8],[2048,10.2],[2560,11.7],[3072,13.1],[3584,14.2],[4096,6.5]],
+  "out_proj": [[1,44.7],[2,30.5],[3,26.4],[4,26.9],[6,26.5],[8,26.2],[12,26.1],[16,26.5],[20,24.0],[24,26.1],[28,26.0],[32,26.2],[40,22.9],[48,24.1],[56,23.5],[64,22.3],[80,19.9],[96,24.2],[112,16.7],[128,21.9],[160,1.1],[200,13.8],[256,13.8],[384,7.9],[512,14.4],[768,2.4],[1024,11.5],[1280,2.9],[1536,5.6],[1792,10.6],[2048,6.4],[2560,7.0],[3072,7.6],[3584,8.6],[4096,3.1]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA1["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+// Shared y-scale across both runs so the panels are directly, visually comparable.
+const allVals = [...Object.values(DATA1).flat(), ...Object.values(DATA2).flat()].map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+const svgNS = 'http://www.w3.org/2000/svg';
+
+function renderChart(data, containerId) {
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  for (let v = yMin; v <= yMax; v += 5) {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v + '%';
+    svg.appendChild(t);
+  }
+  [1,4,16,64,256,1024,4096].forEach(c => {
+    const x = xPos(c);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 10);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = c;
+    svg.appendChild(t);
+  });
+  const xlab = document.createElementNS(svgNS, 'text');
+  xlab.setAttribute('class', 'axis-text');
+  xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+  xlab.setAttribute('text-anchor', 'middle');
+  xlab.textContent = 'M (batch size)';
+  svg.appendChild(xlab);
+
+  SHAPES.forEach(([name, color]) => {
+    const series = data[name];
+    let d = '';
+    series.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('d', d.trim());
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', 2);
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('opacity', '0.9');
+    svg.appendChild(path);
+
+    series.forEach(([m,v]) => {
+      const x = xPos(m), y = yPos(v);
+      const circ = document.createElementNS(svgNS, 'circle');
+      circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+      circ.setAttribute('r', 3.5);
+      circ.setAttribute('fill', color);
+      circ.style.cursor = 'pointer';
+      circ.addEventListener('mouseenter', () => {
+        tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup vs. default</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+        tooltip.style.opacity = 1;
+      });
+      circ.addEventListener('mousemove', (e) => {
+        tooltip.style.left = (e.clientX + 14) + 'px';
+        tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+      });
+      circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+      svg.appendChild(circ);
+    });
+  });
+
+  document.getElementById(containerId).appendChild(svg);
+}
+
+renderChart(DATA1, 'chart-wrap-1');
+renderChart(DATA2, 'chart-wrap-2');
+</script>

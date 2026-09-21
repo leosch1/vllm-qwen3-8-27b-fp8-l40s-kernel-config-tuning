@@ -1,0 +1,303 @@
+<title>Original Tuned Config, Cycling Kernel Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+  --traffic:        #4a7fd9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767; --traffic: #6b9fe8;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767; --traffic: #6b9fe8;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+.panel-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 26px 0 8px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, original tuned config vs. default, under cache-cycling pressure</h1>
+  <p class="sub">Same 175-point grid and cache-cycling methodology as the cache-aware/groupfix charts &mdash; this time for the plain, unpatched original tuned config (this repo's <code>tuned-configs/</code>, <code>GROUP_SIZE_M=1</code> at every large-M anchor on <code>gate_up_proj</code>).</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Tuned still beats default at most points, including most large-M gate_up_proj anchors (+5.8% to +9.6% at M=1024-4096) &mdash; this is <em>not</em> a contradiction of 14/16's GROUP_SIZE_M finding. Those experiments held every other parameter fixed and varied only GROUP_SIZE_M; tuned's other parameters (BLOCK_SIZE_M=128 vs. default's 64, num_warps=8 vs. 4) carry a real, GROUP_SIZE_M-independent advantage that outweighs GROUP_SIZE_M=1's cache-locality cost in this single-shape, no-other-confounds isolated benchmark. 14/175 points still negative overall, worst -20.5% (qkv_proj, M=160) &mdash; comparable to groupfix and cache-aware's own cycling results.</p>
+
+  <div class="panel-title">Real serving traffic (c=64, 500 requests)</div>
+  <div class="chart-wrap" id="chart-wrap-c64"></div>
+  <p class="note">Real GEMM kernel launch counts by M under actual serving traffic (from <a href="../24-cudagraph-dispatch-histogram/README.md">experiment 23</a>'s direct <code>CudagraphDispatcher.dispatch()</code> instrumentation), eager and graph-replayed launches combined into one total per M, plotted on the same log2 M axis as the per-shape speedup lines above so the two can be read together directly. Traffic is completely dominated by <b>M=64 &mdash; the concurrency target itself</b> &mdash; at 209,920 launches, roughly 7&times; the next-largest bucket (M=52, 30,208). Every M anchor the 5 shape lines above actually characterize at any density is a rounding error by comparison.</p>
+  <p class="note">Dashed vertical lines (hover for details) mark every point above whose isolated speedup is worse than -5% &mdash; the real regressions, not the small-magnitude noise: M=40 (<code>gate_up_proj</code>, -15.7%), M=80 (<code>in_proj_qkvz</code>, -11.5%), M=160 (<code>in_proj_qkvz</code> -8.3% and <code>qkv_proj</code> -20.5%, the single worst point in the whole grid), M=768 (<code>down_proj</code>, -7.5%). <b>None of these four M's carry any real traffic</b> &mdash; every severe regression this isolated benchmark finds sits at a batch size real serving never actually hits at c=64.</p>
+</div>
+
+<script>
+const DATA = {
+  "gate_up_proj": [[1,18.1],[2,3.5],[3,1.4],[4,1.5],[6,1.6],[8,0.9],[12,1.2],[16,-2.7],[20,-0.3],[24,4.1],[28,2.0],[32,2.1],[40,-15.7],[48,0.1],[56,0.9],[64,0.9],[80,-0.7],[96,-2.1],[112,-0.6],[128,0.2],[160,4.6],[200,7.6],[256,5.8],[384,9.2],[512,-4.0],[768,1.8],[1024,6.0],[1280,5.4],[1536,9.2],[1792,6.7],[2048,5.8],[2560,8.1],[3072,9.6],[3584,9.0],[4096,8.5]],
+  "in_proj_qkvz": [[1,20.3],[2,8.0],[3,15.7],[4,6.1],[6,8.0],[8,5.9],[12,4.9],[16,6.9],[20,6.4],[24,8.1],[28,8.8],[32,7.8],[40,8.6],[48,6.4],[56,7.8],[64,7.0],[80,-11.5],[96,2.7],[112,3.6],[128,5.0],[160,-8.3],[200,10.8],[256,11.7],[384,5.5],[512,10.4],[768,7.0],[1024,8.9],[1280,7.7],[1536,7.3],[1792,7.6],[2048,5.5],[2560,10.5],[3072,12.1],[3584,12.7],[4096,12.9]],
+  "qkv_proj": [[1,20.6],[2,7.3],[3,12.4],[4,10.7],[6,9.9],[8,9.6],[12,8.8],[16,10.4],[20,11.2],[24,9.3],[28,10.2],[32,9.9],[40,9.6],[48,7.6],[56,7.2],[64,8.6],[80,2.8],[96,8.0],[112,6.7],[128,8.8],[160,-20.5],[200,4.7],[256,8.6],[384,6.1],[512,3.0],[768,8.1],[1024,5.6],[1280,9.3],[1536,7.5],[1792,9.1],[2048,7.7],[2560,13.6],[3072,9.7],[3584,9.4],[4096,12.3]],
+  "down_proj": [[1,26.5],[2,14.3],[3,14.9],[4,15.9],[6,17.1],[8,13.2],[12,15.6],[16,15.2],[20,14.6],[24,14.6],[28,15.4],[32,18.0],[40,20.7],[48,15.0],[56,13.9],[64,13.6],[80,15.5],[96,14.1],[112,13.9],[128,10.1],[160,10.1],[200,5.1],[256,5.3],[384,-3.1],[512,9.1],[768,-7.5],[1024,7.3],[1280,9.4],[1536,8.2],[1792,10.5],[2048,7.7],[2560,10.7],[3072,12.4],[3584,12.9],[4096,11.5]],
+  "out_proj": [[1,19.6],[2,12.8],[3,13.2],[4,9.9],[6,8.4],[8,7.3],[12,12.0],[16,12.0],[20,12.9],[24,10.3],[28,11.5],[32,10.8],[40,8.9],[48,8.4],[56,9.4],[64,9.0],[80,8.3],[96,7.7],[112,5.1],[128,7.2],[160,-4.9],[200,7.9],[256,10.3],[384,14.6],[512,10.2],[768,0.5],[1024,7.7],[1280,-0.8],[1536,5.5],[1792,9.6],[2048,6.0],[2560,7.6],[3072,10.2],[3584,12.4],[4096,6.2]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SHAPES.forEach(([name, color]) => {
+  const data = DATA[name];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+
+// --- Second panel: real c=64 serving traffic, eager + replayed combined,
+// same log2 M axis (xPos/PAD_L/PAD_R/W/plotW reused from above) so the two
+// panels line up. Data from 24-cudagraph-dispatch-histogram's exact
+// dispatch-call instrumentation (eager + replayed launch counts summed
+// per M; no distinction drawn between the two here).
+(() => {
+  const EAGER = [[312,1792],[360,256],[562,256],[575,256],[829,256],[1003,256],[1217,256],[1431,256],[1833,1536],[1834,1536],[1835,4096],[2009,256],[2017,256],[2048,8448]];
+  const REPLAYED = [[1,256],[2,256],[9,256],[16,256],[23,256],[30,256],[37,256],[44,256],[49,256],[50,1536],[51,512],[52,30208],[63,3584],[64,209920],[256,256]];
+  const byM = new Map();
+  [...EAGER, ...REPLAYED].forEach(([m,v]) => byM.set(m, (byM.get(m)||0) + v));
+  const TRAFFIC = [...byM.entries()].sort((a,b) => a[0]-b[0]);
+
+  const svg2 = document.createElementNS(svgNS, 'svg');
+  svg2.setAttribute('class', 'chart');
+  svg2.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const yMinLog = 2; // floor at 100
+  const yMaxLog = Math.ceil(Math.log10(Math.max(...TRAFFIC.map(p=>p[1]))));
+  function yPos2(v) { return PAD_T + plotH - (Math.log10(Math.max(v,1)) - yMinLog) / (yMaxLog - yMinLog) * plotH; }
+
+  for (let p = yMinLog; p <= yMaxLog; p++) {
+    const v = Math.pow(10, p);
+    const y = yPos2(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg2.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toLocaleString();
+    svg2.appendChild(t);
+  }
+  [1,4,16,64,256,1024,4096].forEach(c => {
+    const x = xPos(c);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 10);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = c;
+    svg2.appendChild(t);
+  });
+  const xlab2 = document.createElementNS(svgNS, 'text');
+  xlab2.setAttribute('class', 'axis-text');
+  xlab2.setAttribute('x', PAD_L + plotW/2); xlab2.setAttribute('y', H);
+  xlab2.setAttribute('text-anchor', 'middle');
+  xlab2.textContent = 'M (batch size)';
+  svg2.appendChild(xlab2);
+
+  // Severe-negative markers: every (shape, M) point above whose speedup is
+  // worse than -5% (the real regressions, not the mild noise), drawn as
+  // vertical guide lines at the same M position so it's visible at a
+  // glance how few of them land on an M that real traffic actually
+  // exercises. M=160 carries two shapes (in_proj_qkvz, qkv_proj) -- grouped
+  // into one line with both listed in its tooltip.
+  const SEVERE_NEGATIVES = [
+    {m: 40,  entries: [{shape: "gate_up_proj", v: -15.7}]},
+    {m: 80,  entries: [{shape: "in_proj_qkvz", v: -11.5}]},
+    {m: 160, entries: [{shape: "in_proj_qkvz", v: -8.3}, {shape: "qkv_proj", v: -20.5}]},
+    {m: 768, entries: [{shape: "down_proj",    v: -7.5}]},
+  ];
+  SEVERE_NEGATIVES.forEach(({m, entries}) => {
+    const x = xPos(m);
+    const vline = document.createElementNS(svgNS, 'line');
+    vline.setAttribute('class', 'zeroline');
+    vline.setAttribute('x1', x); vline.setAttribute('x2', x);
+    vline.setAttribute('y1', PAD_T); vline.setAttribute('y2', PAD_T + plotH);
+    vline.style.cursor = 'pointer';
+    const traffic = byM.get(m) || 0;
+    vline.addEventListener('mouseenter', () => {
+      const rows = entries.map(({shape, v}) => `<div class="row"><span class="k">${shape}</span><b>${v.toFixed(1)}%</b></div>`).join('');
+      tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div>${rows}<div class="row"><span class="k">real traffic</span><b>${traffic ? traffic.toLocaleString()+' launches' : 'none'}</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    vline.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    vline.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg2.appendChild(vline);
+  });
+
+  const barW = 3;
+  TRAFFIC.forEach(([m, v]) => {
+    const x = xPos(m), y = yPos2(v);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x - barW/2); rect.setAttribute('y', y);
+    rect.setAttribute('width', barW); rect.setAttribute('height', PAD_T + plotH - y);
+    rect.setAttribute('rx', 1);
+    rect.setAttribute('fill', 'var(--traffic)');
+    rect.setAttribute('opacity', '0.85');
+    rect.style.cursor = 'pointer';
+    rect.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">launches</span><b>${v.toLocaleString()}</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    rect.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    rect.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg2.appendChild(rect);
+  });
+
+  document.getElementById('chart-wrap-c64').appendChild(svg2);
+})();
+</script>

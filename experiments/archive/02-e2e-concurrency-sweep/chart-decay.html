@@ -1,0 +1,168 @@
+<title>E2E Speedup Decay</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 760px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 16px; max-width: 640px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.noise-band { fill: var(--s1); opacity: 0.08; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 620px; }
+</style>
+
+<div class="viz-root">
+  <h1>Output tok/s delta (tuned vs. default) vs. concurrency</h1>
+  <p class="sub">Same client traffic profile (<code>--request-rate inf</code>) at 10 concurrency levels, 16x-scaled sample counts, <code>--max-num-seqs=128</code> (raised from 64 to test past the old scheduler ceiling). A smooth, monotonic decay -- not a step change -- consistent with a shrinking share of per-step time (GEMM is ~12% of a decode step at low load, ~3.5% at high load), not with suddenly hitting a specific weak batch size. Confirmed directly: even after raising the ceiling let real traffic reach M=160 (a flagged weak point), the curve kept decaying at the same rate rather than dropping further -- see the traffic-vs-speedup plot.</p>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Shaded band marks the approximate noise floor observed across repeated e2e runs elsewhere in this investigation (a few percent) -- once the curve enters it, the sign of the last point or two is not a reliable indicator of a real effect.</p>
+</div>
+
+<script>
+const DATA = [[1,28.0],[2,9.9],[4,4.8],[8,5.6],[16,3.5],[32,2.5],[48,-0.0],[64,-0.8],[96,-2.9],[128,-4.1]];
+
+const W = 720, H = 320, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const xs = DATA.map(p=>p[0]);
+const xMin = Math.log2(Math.min(...xs)), xMax = Math.log2(Math.max(...xs));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const vals = DATA.map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...vals) / 5) * 5;
+const yMin = Math.floor(Math.min(...vals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+// noise band, -3% to +3%
+const bandTop = yPos(3), bandBot = yPos(-3);
+const band = document.createElementNS(svgNS, 'rect');
+band.setAttribute('class', 'noise-band');
+band.setAttribute('x', PAD_L); band.setAttribute('y', bandTop);
+band.setAttribute('width', plotW); band.setAttribute('height', bandBot - bandTop);
+svg.appendChild(band);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+xs.forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = '--max-concurrency';
+svg.appendChild(xlab);
+
+let d = '';
+DATA.forEach(([c,v], i) => { d += (i===0?'M':'L') + xPos(c) + ',' + yPos(v) + ' '; });
+const path = document.createElementNS(svgNS, 'path');
+path.setAttribute('d', d.trim());
+path.setAttribute('fill', 'none');
+path.setAttribute('stroke', 'var(--s1)');
+path.setAttribute('stroke-width', '2.5');
+path.setAttribute('stroke-linecap', 'round');
+path.setAttribute('stroke-linejoin', 'round');
+svg.appendChild(path);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+DATA.forEach(([c,v]) => {
+  const x = xPos(c), y = yPos(v);
+  const circ = document.createElementNS(svgNS, 'circle');
+  circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+  circ.setAttribute('r', 5);
+  circ.setAttribute('fill', 'var(--s1)');
+  circ.style.cursor = 'pointer';
+  circ.addEventListener('mouseenter', (e) => {
+    tooltip.innerHTML = `<div class="row"><span class="k">concurrency</span><b>${c}</b></div><div class="row"><span class="k">delta</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+    tooltip.style.opacity = 1;
+  });
+  circ.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+  svg.appendChild(circ);
+
+  const label = document.createElementNS(svgNS, 'text');
+  label.setAttribute('x', x);
+  label.setAttribute('y', v >= 0 ? y - 10 : y + 18);
+  label.setAttribute('text-anchor', 'middle');
+  label.setAttribute('font-size', '11');
+  label.setAttribute('fill', 'var(--text-secondary)');
+  label.textContent = (v>0?'+':'') + v.toFixed(1) + '%';
+  svg.appendChild(label);
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

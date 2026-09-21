@@ -1,0 +1,27 @@
+vllm bench serve --max-concurrency 64 --num-prompts 150 --request-rate inf
+
+============ Serving Benchmark Result ============
+Successful requests:                     150
+Failed requests:                         0
+Maximum request concurrency:             64
+Benchmark duration (s):                  29.70
+Total input tokens:                      46258
+Total generated tokens:                  19200
+Request throughput (req/s):              5.05
+Output token throughput (tok/s):         646.46
+Peak output token throughput (tok/s):    1304.00
+Peak concurrent requests:                90.00
+Total token throughput (tok/s):          2203.95
+---------------Time to First Token----------------
+Mean TTFT (ms):                          2504.81
+Median TTFT (ms):                        1992.78
+P99 TTFT (ms):                           6015.39
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          69.61
+Median TPOT (ms):                        73.84
+P99 TPOT (ms):                           85.74
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           69.18
+Median ITL (ms):                         50.78
+P99 ITL (ms):                            464.48
+==================================================

@@ -1,0 +1,86 @@
+=== Real, unmodified autotuning script (leosch1/vllm@qwen3-8-27b-fp8-dense-tuning,
+same fork/branch/command as ../../../k8s/tune-job.yaml), run 3x independently in the
+SAME pod (--batch-size 1024, all 5 shapes tuned each run, only gate_up_proj's
+result was captured before the job was torn down) ===
+
+gate_up_proj (N=17408, K=5120) at M=1024:
+
+committed/historical (this repo's tuned-configs/N=17408,K=5120,...json):
+  {
+    "BLOCK_SIZE_M": 128,
+    "BLOCK_SIZE_N": 128,
+    "BLOCK_SIZE_K": 128,
+    "GROUP_SIZE_M": 1,
+    "num_warps": 8,
+    "num_stages": 4
+  }
+
+run 1 (today):
+  {
+    "BLOCK_SIZE_M": 128,
+    "BLOCK_SIZE_N": 128,
+    "BLOCK_SIZE_K": 128,
+    "GROUP_SIZE_M": 32,
+    "num_warps": 8,
+    "num_stages": 3
+  }
+
+run 2 (today):
+  {
+    "BLOCK_SIZE_M": 128,
+    "BLOCK_SIZE_N": 128,
+    "BLOCK_SIZE_K": 128,
+    "GROUP_SIZE_M": 16,
+    "num_warps": 8,
+    "num_stages": 3
+  }
+
+run 3 (today):
+  {
+    "BLOCK_SIZE_M": 128,
+    "BLOCK_SIZE_N": 128,
+    "BLOCK_SIZE_K": 128,
+    "GROUP_SIZE_M": 32,
+    "num_warps": 8,
+    "num_stages": 3
+  }
+
+Conclusion: none of 3 fresh, independent full-search runs reproduced the
+committed GROUP_SIZE_M=1 result at this M. BLOCK_SIZE_M/N/K and num_warps
+were stable across all 4 data points (committed + 3 fresh); only
+GROUP_SIZE_M and num_stages varied.
+
+Caveat (this first attempt only -- see "second attempt" below for the
+fully-saved rerun): only gate_up_proj's M=1024 entry was captured from
+each run before the k8s Job was deleted (to free the GPU) -- the other 4
+shapes' results from these 3 runs, and run 3's shapes 2-5 specifically
+(likely never completed -- the job was torn down while run 3 was still on
+shape 2/5, in_proj_qkvz), were not saved and are not recoverable (the
+Job's emptyDir volume was destroyed with the pod).
+
+
+=== Second attempt: same job, rerun in full, all output saved this time ===
+
+Same job yaml (real-tuner-repeat-m1024-job.yaml), rerun end-to-end after
+the first attempt's data loss. This time the job was allowed to fully
+complete (all 3 runs x all 5 shapes, confirmed "done, sleeping" reached),
+and the ENTIRE tuned-configs-run1/2/3 directories (all 5 shapes each) were
+`oc cp`'d to local disk -- see ./real-tuner-repeat-m1024-full-results/ --
+before the job was deleted.
+
+gate_up_proj (N=17408, K=5120) at M=1024, second attempt:
+  run 1: GROUP_SIZE_M=64  (BLOCK_SIZE_M=128, BLOCK_SIZE_N=128, BLOCK_SIZE_K=128, num_warps=8, num_stages=3)
+  run 2: GROUP_SIZE_M=64  (same other params)
+  run 3: GROUP_SIZE_M=16  (same other params)
+
+Combined across BOTH attempts (6 independent fresh full-search runs total):
+  GROUP_SIZE_M values seen: 16, 32, 32, 16, 64, 64  -- i.e. 16 (x2), 32 (x2), 64 (x2)
+  GROUP_SIZE_M=1 (the committed/historical value): 0/6
+
+Roughly even coverage of all three grouped candidates, and STILL zero
+occurrences of the committed GROUP_SIZE_M=1 across 6 tries -- strong,
+repeated confirmation that the historical pick was an outlier of a noisy
+process, not a typical or even moderately likely outcome.
+
+Full 5-shape JSON files for the second attempt's 3 runs are saved in
+./real-tuner-repeat-m1024-full-results/tuned-configs-run{1,2,3}/.

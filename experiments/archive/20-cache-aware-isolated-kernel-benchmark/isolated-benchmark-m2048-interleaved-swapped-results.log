@@ -1,0 +1,24 @@
+=== writing singlefix + tuned gate_up_proj config files ===
+=== writing swapped-order interleaved check script ===
+=== running swapped-order interleaved check ===
+tuned_config[2048] = {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+singlefix_config[2048] = {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 16, 'num_warps': 8, 'num_stages': 3}
+
+### gate_up_proj (N=17408, K=5120), M=2048, 10 repeats, ITERATION-LEVEL INTERLEAVED design, SWAPPED ORDER (singlefix first)
+| repeat | tuned_mean | singlefix_mean | speedup |
+|---:|---:|---:|---:|
+| 1 | 123.110 | 114.771 | +6.77% |
+| 2 | 124.081 | 115.944 | +6.56% |
+| 3 | 125.159 | 116.957 | +6.55% |
+| 4 | 125.779 | 117.788 | +6.35% |
+| 5 | 126.885 | 118.849 | +6.33% |
+| 6 | 127.489 | 119.627 | +6.17% |
+| 7 | 128.577 | 120.680 | +6.14% |
+| 8 | 130.357 | 122.712 | +5.86% |
+| 9 | 130.281 | 122.594 | +5.90% |
+| 10 | 131.914 | 124.425 | +5.68% |
+
+observed speedup values: [6.77, 6.56, 6.55, 6.35, 6.33, 6.17, 6.14, 5.86, 5.9, 5.68]
+mean: +6.23%, stdev: 0.35pp, SEM: 0.11pp
+10/10 repeats positive
+95% CI (approx, t~2.26 for n=10): [+5.98%, +6.48%]

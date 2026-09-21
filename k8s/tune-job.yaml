@@ -1,7 +1,7 @@
 # Reproduces tuned-configs/*.json from scratch: clones leosch1/vllm's
-# qwen3-8-27b-fp8-dense-tuning branch (v0.27.1 + the shape patch to
-# get_weight_shapes(), see benchmarks/kernels/benchmark_w8a8_block_fp8.py
-# there), then runs the tuner.
+# qwen3-8-27b-fp8-dense-tuning branch (v0.27.1 + two real commits: the
+# shape patch and the L2-flush patch -- see the root README for both
+# diffs and why the L2-flush one matters), then runs the tuner.
 #
 # Usage: kubectl apply -f tune-job.yaml
 # Once the pod reaches the "sleeping" log line, copy the result out and clean up:

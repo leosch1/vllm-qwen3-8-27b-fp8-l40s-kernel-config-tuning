@@ -1,0 +1,394 @@
+<title>GEMM FLOPs vs Real-Serving Inflation</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #898781;
+  --border:         #e2e0da;
+  --grid:           #e1e0d9;
+  --baseline:       #c3c2b7;
+  --s1: #2a78d6; --s2: #eb6834;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --border: #35342f; --grid: #2c2c2a; --baseline: #383835;
+    --s1: #3987e5; --s2: #d95926;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #898781;
+  --border: #35342f; --grid: #2c2c2a; --baseline: #383835;
+  --s1: #3987e5; --s2: #d95926;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 980px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 780px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 30px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; max-width: 780px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 10px; font-size: 12.5px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 10px; height: 10px; border-radius: 50%; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.baseline { stroke: var(--baseline); stroke-width: 1.25; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.axis-title { fill: var(--text-secondary); font-size: 11px; }
+.point-label { fill: var(--text-secondary); font-size: 10px; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.callout {
+  border-left: 3px solid var(--s2); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout b { color: var(--text-primary); }
+table.data-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+table.data-table th, table.data-table td { padding: 5px 8px; text-align: right; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+table.data-table th:first-child, table.data-table td:first-child { text-align: left; }
+table.data-table th { color: var(--text-muted); font-weight: 600; font-size: 11px; }
+details summary { cursor: pointer; font-size: 12.5px; color: var(--text-secondary); margin-top: 14px; }
+</style>
+
+<div class="viz-root">
+  <h1>GEMM size (FLOPs) vs. how much worse real serving is than isolated benchmarking</h1>
+  <p class="sub">All 5 real W8A8 shapes, at both M=1 (c=1 decode) and M=2048 (c=64 slow cluster) &mdash; 10 points total, spanning ~11,600&times; in FLOPs. Both isolated and real-serving durations measured live on the same hardware (isolated: <code>isolated_all_shapes.py</code> / <code>isolated_all_shapes_m1.py</code>; real: reverse-mapped from <code>pass1-default-concurrency64-v2</code> / <code>pass2-tuned-concurrency64-v2</code> / their c=1 counterparts). Lines connect each shape's M=1 point to its M=2048 point, within each config.</p>
+
+  <div class="legend" id="legend-main"></div>
+
+  <div class="panel-title">Ratio: real-serving duration &divide; isolated duration</div>
+  <div class="panel-sub">Note this is <b>not</b> cleanly monotonic within a shape &mdash; tuned's own ratio for gate_up_proj is actually <i>higher</i> at M=1 (25.6&times;) than at M=2048 (17.4&times;), because the isolated baseline itself grows with M too. Ratio alone doesn't cleanly separate the M=1&rarr;M=2048 story; see the absolute-difference panel below for that.</div>
+  <div class="chart-wrap" id="chart-ratio"></div>
+
+  <div class="panel-title">Absolute difference: real-serving &minus; isolated (&micro;s)</div>
+  <div class="panel-sub">The extra time each real occurrence costs versus its own isolated baseline. For 4 of 5 shapes, tuned's extra cost is consistently <i>lower</i> than default's at the same FLOPs. gate_up_proj is the one clear exception at M=2048, where tuned's extra cost roughly doubles default's.</div>
+  <div class="chart-wrap" id="chart-diff"></div>
+
+  <div class="callout">Reading both panels together: the qualitative finding (gate_up_proj's tuned config is the outlier, not "big GEMMs in general") holds under both normalizations, which is reassuring. But with only 5 shapes &mdash; and <code>N</code> and <code>K</code> varying together rather than independently across them &mdash; this doesn't establish a precise functional law relating FLOPs to the effect. It shows one large, repeatable anomaly at the one shape with by far the largest N, and a roughly consistent, much smaller effect everywhere else.</div>
+
+  <details>
+    <summary>Full data table</summary>
+    <div id="table-container"></div>
+  </details>
+</div>
+
+<script>
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+function bindTooltip(el, htmlFn) {
+  el.addEventListener('mouseenter', () => { tooltip.innerHTML = htmlFn(); tooltip.style.opacity = 1; });
+  el.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+}
+
+const DATA = [
+  {
+    "role": "out_proj",
+    "M": 1,
+    "N": 5120,
+    "K": 3072,
+    "flops": 31457280,
+    "default_iso_us": 7.3,
+    "default_real_us": 43.87,
+    "default_diff_us": 36.57,
+    "default_ratio": 6.00958904109589,
+    "tuned_iso_us": 3.9,
+    "tuned_real_us": 24.93,
+    "tuned_diff_us": 21.03,
+    "tuned_ratio": 6.392307692307693
+  },
+  {
+    "role": "qkv_proj",
+    "M": 1,
+    "N": 7168,
+    "K": 5120,
+    "flops": 73400320,
+    "default_iso_us": 10.6,
+    "default_real_us": 80.11,
+    "default_diff_us": 69.51,
+    "default_ratio": 7.557547169811321,
+    "tuned_iso_us": 4.6,
+    "tuned_real_us": 56.57,
+    "tuned_diff_us": 51.97,
+    "tuned_ratio": 12.297826086956523
+  },
+  {
+    "role": "in_proj_qkvz",
+    "M": 1,
+    "N": 8192,
+    "K": 5120,
+    "flops": 83886080,
+    "default_iso_us": 11.5,
+    "default_real_us": 89.64,
+    "default_diff_us": 78.14,
+    "default_ratio": 7.794782608695653,
+    "tuned_iso_us": 4.6,
+    "tuned_real_us": 64.44,
+    "tuned_diff_us": 59.839999999999996,
+    "tuned_ratio": 14.008695652173914
+  },
+  {
+    "role": "down_proj",
+    "M": 1,
+    "N": 5120,
+    "K": 8704,
+    "flops": 89128960,
+    "default_iso_us": 12.6,
+    "default_real_us": 101.47,
+    "default_diff_us": 88.87,
+    "default_ratio": 8.053174603174604,
+    "tuned_iso_us": 5.0,
+    "tuned_real_us": 68.38,
+    "tuned_diff_us": 63.379999999999995,
+    "tuned_ratio": 13.675999999999998
+  },
+  {
+    "role": "gate_up_proj",
+    "M": 1,
+    "N": 17408,
+    "K": 5120,
+    "flops": 178257920,
+    "default_iso_us": 18.8,
+    "default_real_us": 168.9,
+    "default_diff_us": 150.1,
+    "default_ratio": 8.98404255319149,
+    "tuned_iso_us": 5.3,
+    "tuned_real_us": 135.5,
+    "tuned_diff_us": 130.2,
+    "tuned_ratio": 25.566037735849058
+  },
+  {
+    "role": "out_proj",
+    "M": 2048,
+    "N": 5120,
+    "K": 3072,
+    "flops": 64424509440,
+    "default_iso_us": 24.0,
+    "default_real_us": 216.1,
+    "default_diff_us": 192.1,
+    "default_ratio": 9.004166666666666,
+    "tuned_iso_us": 22.2,
+    "tuned_real_us": 194.5,
+    "tuned_diff_us": 172.3,
+    "tuned_ratio": 8.76126126126126
+  },
+  {
+    "role": "qkv_proj",
+    "M": 2048,
+    "N": 7168,
+    "K": 5120,
+    "flops": 150323855360,
+    "default_iso_us": 51.2,
+    "default_real_us": 486.6,
+    "default_diff_us": 435.40000000000003,
+    "default_ratio": 9.50390625,
+    "tuned_iso_us": 46.0,
+    "tuned_real_us": 442.9,
+    "tuned_diff_us": 396.9,
+    "tuned_ratio": 9.628260869565217
+  },
+  {
+    "role": "in_proj_qkvz",
+    "M": 2048,
+    "N": 8192,
+    "K": 5120,
+    "flops": 171798691840,
+    "default_iso_us": 57.9,
+    "default_real_us": 557.2,
+    "default_diff_us": 499.30000000000007,
+    "default_ratio": 9.623488773747843,
+    "tuned_iso_us": 52.4,
+    "tuned_real_us": 508.9,
+    "tuned_diff_us": 456.5,
+    "tuned_ratio": 9.711832061068701
+  },
+  {
+    "role": "down_proj",
+    "M": 2048,
+    "N": 5120,
+    "K": 8704,
+    "flops": 182536110080,
+    "default_iso_us": 62.2,
+    "default_real_us": 565.9,
+    "default_diff_us": 503.7,
+    "default_ratio": 9.098070739549838,
+    "tuned_iso_us": 55.0,
+    "tuned_real_us": 511.3,
+    "tuned_diff_us": 456.3,
+    "tuned_ratio": 9.296363636363637
+  },
+  {
+    "role": "gate_up_proj",
+    "M": 2048,
+    "N": 17408,
+    "K": 5120,
+    "flops": 365072220160,
+    "default_iso_us": 133.0,
+    "default_real_us": 1148.2,
+    "default_diff_us": 1015.2,
+    "default_ratio": 8.633082706766917,
+    "tuned_iso_us": 117.8,
+    "tuned_real_us": 2054.7,
+    "tuned_diff_us": 1936.8999999999999,
+    "tuned_ratio": 17.44227504244482
+  }
+];
+
+document.getElementById('legend-main').innerHTML = `
+  <div class="legend-item"><span class="swatch" style="background:var(--s1)"></span>default</div>
+  <div class="legend-item"><span class="swatch" style="background:var(--s2)"></span>tuned</div>
+`;
+
+function niceLogTicks(lo, hi) {
+  const candidates = [1e7,3e7,1e8,3e8,1e9,3e9,1e10,3e10,1e11,3e11,1e12];
+  return candidates.filter(v => v >= lo*0.99 && v <= hi*1.01);
+}
+function fmtFlops(v) {
+  if (v >= 1e9) return (v/1e9).toFixed(v>=1e10?0:1) + 'B';
+  return (v/1e6).toFixed(v>=1e8?0:1) + 'M';
+}
+
+function renderScatter(containerId, yField, yLabel, yLogScale, yTicks) {
+  const W = 900, H = 320, PAD_L = 56, PAD_T = 16, PAD_B = 34;
+  const padR = 16;
+  const plotW = W - PAD_L - padR, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const xVals = DATA.map(d => d.flops);
+  const xLo = Math.min(...xVals), xHi = Math.max(...xVals);
+  const logXLo = Math.log10(xLo), logXHi = Math.log10(xHi);
+  const xPos = v => PAD_L + (Math.log10(v) - logXLo) / (logXHi - logXLo) * plotW;
+
+  const yVals = DATA.flatMap(d => [d[`default_${yField}`], d[`tuned_${yField}`]]);
+  let yPos;
+  if (yLogScale) {
+    const yLo = Math.min(...yVals), yHi = Math.max(...yVals);
+    const logYLo = Math.log10(yLo*0.85), logYHi = Math.log10(yHi*1.15);
+    yPos = v => PAD_T + plotH - (Math.log10(v) - logYLo) / (logYHi - logYLo) * plotH;
+  } else {
+    const yHi = Math.max(...yVals) * 1.1;
+    yPos = v => PAD_T + plotH - (v / yHi) * plotH;
+  }
+
+  // gridlines + y ticks
+  const yTickVals = yTicks;
+  yTickVals.forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - padR); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v; svg.appendChild(t);
+  });
+
+  // x ticks
+  niceLogTicks(xLo, xHi).forEach(v => {
+    const x = xPos(v);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 10); t.setAttribute('text-anchor', 'middle');
+    t.textContent = fmtFlops(v); svg.appendChild(t);
+  });
+  const xTitle = document.createElementNS(svgNS, 'text'); xTitle.setAttribute('class', 'axis-title');
+  xTitle.setAttribute('x', PAD_L + plotW/2); xTitle.setAttribute('y', H); xTitle.setAttribute('text-anchor', 'middle');
+  xTitle.textContent = 'FLOPs (log scale)'; svg.appendChild(xTitle);
+
+  // connecting lines per role, per config (M=1 -> M=2048)
+  const roles = [...new Set(DATA.map(d => d.role))];
+  ['default', 'tuned'].forEach(cfg => {
+    const color = cfg === 'default' ? 'var(--s1)' : 'var(--s2)';
+    roles.forEach(role => {
+      const pts = DATA.filter(d => d.role === role).sort((a,b) => a.M - b.M);
+      if (pts.length < 2) return;
+      const line = document.createElementNS(svgNS, 'line');
+      line.setAttribute('x1', xPos(pts[0].flops)); line.setAttribute('y1', yPos(pts[0][`${cfg}_${yField}`]));
+      line.setAttribute('x2', xPos(pts[1].flops)); line.setAttribute('y2', yPos(pts[1][`${cfg}_${yField}`]));
+      line.setAttribute('stroke', color); line.setAttribute('stroke-width', '1.25'); line.setAttribute('stroke-opacity', '0.45');
+      svg.appendChild(line);
+    });
+  });
+
+  // points
+  ['default', 'tuned'].forEach(cfg => {
+    const color = cfg === 'default' ? 'var(--s1)' : 'var(--s2)';
+    DATA.forEach(d => {
+      const val = d[`${cfg}_${yField}`];
+      const cx = xPos(d.flops), cy = yPos(val);
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', 5);
+      c.setAttribute('fill', color); c.setAttribute('fill-opacity', '0.85');
+      c.setAttribute('stroke', 'var(--surface-1)'); c.setAttribute('stroke-width', '1.5');
+      c.style.cursor = 'pointer';
+      bindTooltip(c, () => `
+        <div class="row"><span class="k">${cfg}</span><b>${d.role}, M=${d.M}</b></div>
+        <div class="row"><span class="k">shape</span><b>N=${d.N}, K=${d.K}</b></div>
+        <div class="row"><span class="k">FLOPs</span><b>${d.flops.toLocaleString()}</b></div>
+        <div class="row"><span class="k">isolated</span><b>${d[`${cfg}_iso_us`]}&micro;s</b></div>
+        <div class="row"><span class="k">real</span><b>${d[`${cfg}_real_us`]}&micro;s</b></div>
+        <div class="row"><span class="k">${yLabel}</span><b>${val.toFixed(2)}${yLogScale ? '' : 'x'}</b></div>
+      `);
+      svg.appendChild(c);
+    });
+  });
+
+  // direct-label the gate_up_proj points (the story)
+  ['default', 'tuned'].forEach(cfg => {
+    const color = cfg === 'default' ? 'var(--s1)' : 'var(--s2)';
+    const d = DATA.find(dd => dd.role === 'gate_up_proj' && dd.M === 2048);
+    const val = d[`${cfg}_${yField}`];
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'point-label');
+    t.setAttribute('x', xPos(d.flops) + 8); t.setAttribute('y', yPos(val) + (cfg === 'tuned' ? -6 : 12));
+    t.setAttribute('fill', color);
+    t.textContent = `gate_up_proj (${cfg})`;
+    svg.appendChild(t);
+  });
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+
+renderScatter('chart-ratio', 'ratio', 'ratio', false, [0, 5, 10, 15, 20, 25]);
+renderScatter('chart-diff', 'diff_us', 'diff', true, [20, 50, 100, 200, 500, 1000, 2000]);
+
+// data table
+const cols = ['role','M','N','K','flops','default_iso_us','default_real_us','default_ratio','tuned_iso_us','tuned_real_us','tuned_ratio'];
+const labels = ['role','M','N','K','FLOPs','def iso (µs)','def real (µs)','def ratio','tun iso (µs)','tun real (µs)','tun ratio'];
+let html = '<table class="data-table"><thead><tr>' + labels.map(l => `<th>${l}</th>`).join('') + '</tr></thead><tbody>';
+DATA.forEach(d => {
+  html += '<tr>' + cols.map(c => {
+    let v = d[c];
+    if (typeof v === 'number' && c.includes('ratio')) v = v.toFixed(2) + 'x';
+    else if (typeof v === 'number' && c === 'flops') v = v.toLocaleString();
+    else if (typeof v === 'number' && !Number.isInteger(v)) v = v.toFixed(1);
+    return `<td>${v}</td>`;
+  }).join('') + '</tr>';
+});
+html += '</tbody></table>';
+document.getElementById('table-container').innerHTML = html;
+</script>

@@ -1,0 +1,313 @@
+<title>GEMM Launch Durations, Visible Shapes Only</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #e34948; --s2: #2a78d6; --s3: #1baf7a;
+  --s4: #96700a; --s7: #7e22ce; --s-gray: #9b998f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #e66767; --s2: #3987e5; --s3: #199e70;
+    --s4: #a67c00; --s7: #8e44ce; --s-gray: #6f6e66;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #e66767; --s2: #3987e5; --s3: #199e70;
+  --s4: #a67c00; --s7: #8e44ce; --s-gray: #6f6e66;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 960px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 780px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 30px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; max-width: 780px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 6px; font-size: 12.5px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.legend-col { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.legend-col-title { font-weight: 600; color: var(--text-primary); font-size: 12.5px; margin-bottom: 2px; }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.swatch.sq { width: 10px; height: 10px; border-radius: 2px; }
+.band-strip { display: flex; height: 10px; width: 60px; border-radius: 2px; overflow: hidden; }
+.band-strip span { flex: 1; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+.callout {
+  border-left: 3px solid var(--s2); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout b { color: var(--text-primary); }
+.callout code, .panel-sub code { background: var(--surface-2); border-radius: 3px; padding: 0 3px; }
+</style>
+
+<div class="viz-root">
+  <h1>GEMM launch durations, decomposed by shape &times; batch size (M) &mdash; default, tuned, and groupfix at c=64</h1>
+  <p class="sub">Extends <a href="../05-nsys-hardware-profiling-matrix/chart-durations-by-shape-and-mband-visible-only.html">05's chart</a> with a fifth panel: a brand-new real nsys capture of <code>groupfix</code> (<code>15</code>'s hand-patched config) under the exact same <code>vllm bench serve</code> conditions as the original c=64 captures (500 prompts, 256/128 random input/output len, real request traffic against the live predictor). Classified with the same reverse-mapping formula as <code>tuned</code> &mdash; valid because <code>groupfix</code> only changes <code>GROUP_SIZE_M</code>, which doesn't appear in the grid/block-dimension formula at all, so its launch signatures are byte-identical to <code>tuned</code>'s.</p>
+
+  <div class="panel-title">Full distribution of GEMM launch durations, by shape &times; M-band (visible combos only)</div>
+  <div class="panel-sub">Segment color = one specific (GEMM shape, M-band) combination, reverse-mapped from real grid/block dims using <a href="../08-per-layer-shape-mapping/README.md"><code>08-per-layer-shape-mapping</code></a>'s formula. Solid line marks the mean. Hover any segment for its exact shape, M-band, duration range, share, and count.</div>
+  <div class="legend" id="legend-combos" style="align-items:flex-start; column-gap:28px; row-gap:10px;"></div>
+
+  <div class="panel-sub" style="margin-bottom:2px; margin-top:14px; font-weight:600; color:var(--text-secondary);">concurrency = 1, default</div>
+  <div class="chart-wrap" id="chart-dist-c1-default"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1, tuned</div>
+  <div class="chart-wrap" id="chart-dist-c1-tuned"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64, default</div>
+  <div class="chart-wrap" id="chart-dist-c64-default"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64, tuned</div>
+  <div class="chart-wrap" id="chart-dist-c64-tuned"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64, groupfix (new capture, experiment 20)</div>
+  <div class="chart-wrap" id="chart-dist-c64-groupfix"></div>
+
+  <div class="callout"><b>The fix holds up in the exact measurement that found the regression.</b> At the real, top-of-range M actually reached in these captures (the "M 1024&ndash;2048" bucket, colloquially "M&asymp;2048" in <a href="../05-nsys-hardware-profiling-matrix/chart-durations-by-shape-and-mband-visible-only.html">05</a>'s original callout), <code>gate_up_proj</code>'s weighted-mean duration: <b>default 1111.0&micro;s &rarr; tuned 1961.0&micro;s (+76.5%, the blowout) &rarr; groupfix 1038.3&micro;s (&minus;6.5% vs. default, &minus;47.1% vs. tuned)</b>. <code>groupfix</code> doesn't just recover to <code>default</code>'s level here &mdash; it goes slightly below it, while eliminating <code>tuned</code>'s blowout entirely. This is the first time this specific real-serving kernel-duration regression (not an aggregate e2e number, not an isolated synthetic proxy) has been directly re-measured after the fix, using the same nsys-capture methodology that found it in <a href="../08-per-layer-shape-mapping/README.md"><code>08</code></a>/<a href="../09-isolated-vs-real-flops-inflation/README.md"><code>09</code></a>.</div>
+</div>
+
+<script>
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+function bindTooltip(el, htmlFn) {
+  el.addEventListener('mouseenter', () => { tooltip.innerHTML = htmlFn(); tooltip.style.opacity = 1; });
+  el.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+}
+
+function niceLogTicks(lo, hi) {
+  const candidates = [10,20,30,50,75,100,150,200,300,500,750,1000,1500,2000,3000,5000];
+  return candidates.filter(v => v >= lo && v <= hi);
+}
+
+// (N, K) of the real GEMM each shape name refers to -- see 08-per-layer-shape-mapping/README.md's table.
+const SHAPE_CATS = [
+  {key: "gate_up_proj", label: "gate_up_proj", dims: "N=17408, K=5120", color: "var(--s1)"},
+  {key: "in_proj_qkvz", label: "in_proj_qkvz", dims: "N=8192, K=5120", color: "var(--s2)"},
+  {key: "qkv_proj", label: "qkv_proj", dims: "N=7168, K=5120", color: "var(--s3)"},
+  {key: "out_proj", label: "out_proj", dims: "N=5120, K=3072", color: "var(--s4)"},
+  {key: "down_proj", label: "down_proj", dims: "N=5120, K=8704", color: "var(--s7)"},
+  {key: "unmapped", label: "unmapped (no clear shape)", dims: null, color: "var(--s-gray)"},
+];
+// M-band: 6 real M ranges, recovered from grid/block dims same as the shape itself
+const BAND_LABELS = ["M ≤ 128", "M 128–256", "M 256–512", "M 512–1024", "M 1024–2048", "M 2048–4096"];
+const BAND_MIX = [
+  [55, 'white'], [70, 'white'], [85, 'white'],
+  [85, 'black'], [70, 'black'], [55, 'black'],
+];
+// Each (shape, M-band) combo gets its own fully distinct, individually-legended color.
+// The generator still steps light->dark by band within a shape's base hue, purely to keep
+// ~24 legend rows visually groupable by shape at a glance -- every row is its own legend entry.
+function bandFill(colorVar, band) {
+  if (band == null) return 'var(--s-gray)';
+  const [pct, mix] = BAND_MIX[Math.min(band, BAND_MIX.length - 1)];
+  return `color-mix(in oklab, ${colorVar} ${pct}%, ${mix})`;
+}
+
+const CAT_COLOR = Object.fromEntries(SHAPE_CATS.map(c => [c.key, c.color]));
+const CAT_LABEL = Object.fromEntries(SHAPE_CATS.map(c => [c.key, c.label]));
+const CAT_DIMS = Object.fromEntries(SHAPE_CATS.map(c => [c.key, c.dims]));
+
+const SHAPE_MBAND_DATA = {"bins":[24.2,25.8,27.5,29.32,31.26,33.33,35.53,37.88,40.38,43.05,45.9,48.93,52.16,55.61,59.29,63.2,67.38,71.83,76.58,81.64,87.04,92.79,98.93,105.46,112.44,119.87,127.79,136.23,145.24,154.84,165.07,175.98,187.61,200.01,213.23,227.33,242.35,258.37,275.45,293.65,313.06,333.75,355.81,379.33,404.4,431.13,459.62,490.0,522.39,556.91,593.72,632.96,674.8,719.4,766.95,817.64,871.68,929.29,990.71,1056.19,1126.0,1200.42,1279.76,1364.34,1454.52,1550.65,1653.14,1762.4,1878.89,2003.07,2135.46],"series":{"c1_default":{"n":1310720,"median":99.0,"mean":100.6,"bin_cats":[[5,"unmapped",null,11],[6,"unmapped",null,326],[7,"unmapped",null,439],[8,"unmapped",null,1475],[8,"out_proj",0,37871],[9,"unmapped",null,263],[9,"out_proj",0,286094],[10,"out_proj",0,1155],[10,"unmapped",null,23],[11,"unmapped",null,23],[17,"qkv_proj",0,3],[18,"unmapped",null,8],[18,"qkv_proj",0,71417],[19,"unmapped",null,38],[19,"in_proj_qkvz",0,18023],[19,"qkv_proj",0,9860],[20,"unmapped",null,133],[20,"in_proj_qkvz",0,210510],[21,"unmapped",null,242],[21,"in_proj_qkvz",0,15307],[21,"down_proj",0,1471],[22,"unmapped",null,500],[22,"down_proj",0,323551],[23,"unmapped",null,1067],[23,"down_proj",0,98],[24,"unmapped",null,1164],[25,"unmapped",null,73],[26,"unmapped",null,208],[27,"unmapped",null,774],[28,"unmapped",null,772],[29,"gate_up_proj",0,901],[29,"unmapped",null,141],[30,"gate_up_proj",0,323757],[31,"gate_up_proj",0,462],[34,"unmapped",null,190],[35,"unmapped",null,1769],[36,"unmapped",null,601]]},"c1_tuned":{"n":1310720,"median":67.6,"mean":73.3,"bin_cats":[[0,"out_proj",0,325058],[1,"out_proj",0,58],[2,"out_proj",0,4],[4,"out_proj",2,7],[5,"out_proj",2,2135],[6,"out_proj",2,369],[7,"out_proj",2,36],[8,"out_proj",2,13],[13,"qkv_proj",0,81277],[14,"qkv_proj",0,3],[15,"in_proj_qkvz",0,243790],[15,"down_proj",0,251],[16,"down_proj",0,324856],[16,"in_proj_qkvz",0,10],[17,"in_proj_qkvz",0,40],[17,"down_proj",0,13],[24,"in_proj_qkvz",1,3],[25,"down_proj",2,275],[25,"in_proj_qkvz",1,170],[25,"qkv_proj",1,57],[26,"in_proj_qkvz",1,650],[26,"down_proj",2,2242],[26,"qkv_proj",1,205],[26,"gate_up_proj",0,310030],[27,"gate_up_proj",0,15090],[27,"in_proj_qkvz",1,786],[27,"qkv_proj",1,248],[27,"down_proj",2,43],[28,"in_proj_qkvz",1,311],[28,"qkv_proj",1,130],[33,"gate_up_proj",2,147],[34,"gate_up_proj",2,1808],[35,"gate_up_proj",2,605]]},"c64_default":{"n":536576,"median":86.6,"mean":139.8,"bin_cats":[[3,"out_proj",0,14991],[4,"out_proj",0,15764],[5,"out_proj",0,90],[6,"unmapped",null,19],[6,"out_proj",0,96],[7,"unmapped",null,25],[7,"out_proj",2,382],[7,"out_proj",0,70],[8,"unmapped",null,69],[8,"out_proj",0,265],[8,"out_proj",2,320],[9,"unmapped",null,13],[9,"out_proj",0,9007],[9,"out_proj",2,103],[10,"out_proj",0,29141],[10,"out_proj",2,127],[11,"unmapped",null,2],[11,"out_proj",0,33602],[11,"out_proj",2,83],[12,"out_proj",0,17709],[12,"out_proj",2,9],[13,"out_proj",0,1505],[14,"qkv_proj",0,39],[15,"qkv_proj",0,2402],[16,"qkv_proj",0,18818],[16,"in_proj_qkvz",0,466],[17,"qkv_proj",0,9269],[17,"in_proj_qkvz",0,39608],[17,"out_proj",3,9],[18,"unmapped",null,1],[18,"qkv_proj",0,26],[18,"in_proj_qkvz",0,46058],[18,"out_proj",3,48],[19,"unmapped",null,6],[19,"in_proj_qkvz",0,3709],[19,"qkv_proj",0,6],[19,"down_proj",0,28415],[19,"out_proj",3,29],[20,"unmapped",null,43],[20,"in_proj_qkvz",0,1801],[20,"down_proj",0,2169],[20,"out_proj",3,41],[21,"unmapped",null,84],[21,"in_proj_qkvz",0,9],[21,"down_proj",0,57],[21,"out_proj",3,1],[22,"unmapped",null,47],[22,"down_proj",0,219],[22,"in_proj_qkvz",0,29],[23,"unmapped",null,47],[23,"down_proj",0,137],[24,"unmapped",null,107],[24,"down_proj",0,7511],[24,"down_proj",2,211],[24,"out_proj",4,23],[25,"unmapped",null,395],[25,"down_proj",0,81932],[25,"down_proj",2,497],[25,"qkv_proj",2,20],[25,"out_proj",4,79],[26,"unmapped",null,233],[26,"down_proj",0,1800],[26,"in_proj_qkvz",2,87],[26,"qkv_proj",2,64],[26,"out_proj",4,114],[26,"down_proj",2,316],[27,"unmapped",null,200],[27,"gate_up_proj",0,22912],[27,"in_proj_qkvz",2,234],[27,"qkv_proj",2,41],[27,"out_proj",4,39],[28,"unmapped",null,109],[28,"gate_up_proj",0,7695],[28,"in_proj_qkvz",2,157],[28,"qkv_proj",2,66],[28,"out_proj",4,1],[29,"out_proj",4,45],[29,"gate_up_proj",0,106],[29,"unmapped",null,8],[29,"in_proj_qkvz",2,290],[29,"qkv_proj",2,65],[30,"gate_up_proj",0,451],[30,"out_proj",4,173],[31,"gate_up_proj",0,90815],[31,"out_proj",4,38],[32,"unmapped",null,20],[32,"gate_up_proj",0,261],[32,"out_proj",4,240],[33,"unmapped",null,1671],[33,"out_proj",4,2787],[33,"in_proj_qkvz",3,14],[33,"qkv_proj",3,16],[34,"unmapped",null,2887],[34,"out_proj",4,1196],[34,"down_proj",3,123],[34,"in_proj_qkvz",3,64],[34,"qkv_proj",3,28],[35,"unmapped",null,379],[35,"gate_up_proj",2,74],[35,"qkv_proj",3,20],[35,"in_proj_qkvz",3,18],[35,"down_proj",3,5],[35,"out_proj",4,1],[36,"gate_up_proj",2,95],[36,"unmapped",null,101],[37,"gate_up_proj",2,389],[37,"unmapped",null,90],[38,"gate_up_proj",2,466],[38,"unmapped",null,199],[38,"in_proj_qkvz",3,146],[38,"qkv_proj",4,21],[39,"unmapped",null,29],[39,"in_proj_qkvz",3,238],[39,"qkv_proj",4,11],[40,"qkv_proj",4,9],[40,"unmapped",null,66],[40,"in_proj_qkvz",4,1],[41,"qkv_proj",4,95],[41,"unmapped",null,481],[41,"in_proj_qkvz",4,85],[41,"down_proj",4,127],[42,"unmapped",null,477],[42,"down_proj",4,129],[42,"qkv_proj",4,24],[42,"in_proj_qkvz",4,10],[43,"unmapped",null,288],[44,"unmapped",null,4],[44,"gate_up_proj",3,2],[44,"in_proj_qkvz",4,90],[45,"unmapped",null,1148],[45,"gate_up_proj",3,118],[45,"down_proj",4,87],[45,"in_proj_qkvz",4,6],[46,"unmapped",null,902],[46,"down_proj",4,169],[46,"gate_up_proj",3,8],[47,"unmapped",null,3262],[48,"in_proj_qkvz",4,1840],[48,"down_proj",4,325],[48,"unmapped",null,349],[49,"unmapped",null,4863],[49,"in_proj_qkvz",4,1808],[49,"down_proj",4,3899],[50,"unmapped",null,512],[51,"gate_up_proj",4,50],[52,"gate_up_proj",4,78],[53,"unmapped",null,38],[53,"gate_up_proj",4,128],[54,"unmapped",null,346],[55,"gate_up_proj",4,128],[56,"gate_up_proj",4,119],[57,"gate_up_proj",4,9],[59,"gate_up_proj",4,4322],[60,"gate_up_proj",4,4766]]},"c64_tuned":{"n":537088,"median":78.1,"mean":143.5,"bin_cats":[[0,"out_proj",0,11911],[1,"out_proj",0,19056],[2,"out_proj",0,93],[3,"out_proj",0,87],[4,"out_proj",0,94],[4,"out_proj",2,3],[5,"out_proj",2,212],[5,"out_proj",0,64314],[6,"out_proj",2,453],[6,"out_proj",0,26556],[7,"out_proj",2,406],[7,"out_proj",0,1],[8,"out_proj",2,128],[9,"out_proj",2,74],[10,"out_proj",2,4],[12,"qkv_proj",0,46],[13,"qkv_proj",0,180],[14,"qkv_proj",0,1776],[14,"in_proj_qkvz",0,113],[15,"in_proj_qkvz",0,27499],[15,"qkv_proj",0,8191],[15,"down_proj",0,121],[16,"down_proj",0,30612],[16,"in_proj_qkvz",0,4697],[16,"qkv_proj",0,20318],[17,"in_proj_qkvz",0,28557],[17,"out_proj",3,4],[17,"qkv_proj",0,17],[17,"down_proj",0,144],[18,"in_proj_qkvz",0,30645],[18,"out_proj",3,160],[18,"down_proj",0,73],[19,"in_proj_qkvz",0,67],[19,"out_proj",3,625],[19,"down_proj",0,217],[20,"down_proj",0,13278],[20,"out_proj",3,106],[20,"in_proj_qkvz",0,6],[21,"down_proj",0,77666],[21,"out_proj",3,1],[22,"out_proj",3,4],[22,"down_proj",0,1],[23,"out_proj",3,91],[24,"out_proj",3,33],[24,"out_proj",4,1],[25,"down_proj",2,163],[25,"in_proj_qkvz",1,141],[25,"qkv_proj",1,18],[25,"out_proj",4,111],[26,"in_proj_qkvz",1,293],[26,"down_proj",2,1100],[26,"qkv_proj",1,121],[26,"out_proj",4,16],[26,"gate_up_proj",0,121],[27,"qkv_proj",1,76],[27,"in_proj_qkvz",1,307],[27,"gate_up_proj",0,28732],[27,"out_proj",3,19],[27,"down_proj",2,17],[28,"gate_up_proj",0,1924],[28,"out_proj",3,160],[28,"qkv_proj",1,105],[28,"in_proj_qkvz",1,219],[28,"unmapped",null,1],[29,"out_proj",3,77],[29,"unmapped",null,112],[29,"gate_up_proj",0,165],[30,"gate_up_proj",0,5423],[30,"unmapped",null,15],[31,"unmapped",null,236],[31,"gate_up_proj",0,85604],[31,"out_proj",3,228],[31,"qkv_proj",3,8],[32,"unmapped",null,3576],[32,"gate_up_proj",0,47],[32,"out_proj",3,4756],[32,"in_proj_qkvz",3,334],[32,"qkv_proj",3,203],[33,"gate_up_proj",2,20],[33,"unmapped",null,540],[33,"in_proj_qkvz",3,338],[33,"qkv_proj",3,13],[33,"out_proj",3,8],[34,"gate_up_proj",2,346],[35,"gate_up_proj",2,785],[35,"gate_up_proj",0,8],[35,"down_proj",3,1],[36,"down_proj",3,886],[36,"in_proj_qkvz",3,14],[36,"unmapped",null,32],[36,"gate_up_proj",2,129],[36,"gate_up_proj",0,17],[37,"in_proj_qkvz",3,82],[37,"unmapped",null,30],[37,"down_proj",3,9],[37,"gate_up_proj",0,50],[38,"unmapped",null,7],[38,"gate_up_proj",0,21],[39,"qkv_proj",4,6],[39,"unmapped",null,123],[39,"down_proj",3,124],[40,"in_proj_qkvz",4,45],[40,"qkv_proj",4,58],[40,"unmapped",null,95],[40,"down_proj",3,4],[41,"in_proj_qkvz",4,51],[41,"unmapped",null,1],[42,"unmapped",null,6],[42,"qkv_proj",4,6],[43,"down_proj",4,122],[43,"unmapped",null,1242],[43,"in_proj_qkvz",4,96],[43,"down_proj",3,88],[43,"qkv_proj",4,26],[44,"unmapped",null,127],[44,"down_proj",3,40],[44,"down_proj",4,6],[45,"unmapped",null,3864],[46,"in_proj_qkvz",4,10],[46,"unmapped",null,1065],[47,"in_proj_qkvz",4,3249],[47,"unmapped",null,4327],[47,"down_proj",4,4984],[48,"unmapped",null,25],[48,"in_proj_qkvz",4,5],[48,"down_proj",4,8],[52,"gate_up_proj",3,13],[53,"gate_up_proj",3,213],[54,"gate_up_proj",3,667],[55,"gate_up_proj",3,3],[57,"unmapped",null,2],[58,"unmapped",null,123],[59,"unmapped",null,3],[61,"gate_up_proj",4,86],[62,"gate_up_proj",4,49],[63,"gate_up_proj",4,121],[64,"gate_up_proj",4,77],[65,"gate_up_proj",4,51],[66,"gate_up_proj",4,21],[67,"gate_up_proj",4,729],[68,"gate_up_proj",4,4860],[69,"gate_up_proj",4,3862]]},"c64_groupfix":{"n":536576,"median":78.0,"mean":126.7,"bin_cats":[[26,"in_proj_qkvz",2,282],[7,"out_proj",2,274],[35,"gate_up_proj",2,562],[26,"down_proj",2,738],[5,"out_proj",2,124],[34,"gate_up_proj",2,168],[27,"in_proj_qkvz",2,190],[6,"out_proj",2,372],[27,"qkv_proj",2,81],[27,"down_proj",2,285],[25,"in_proj_qkvz",2,14],[26,"qkv_proj",2,68],[25,"down_proj",2,1],[33,"gate_up_proj",2,3],[17,"in_proj_qkvz",0,29292],[1,"out_proj",0,19466],[28,"gate_up_proj",1,2],[16,"down_proj",0,30674],[15,"in_proj_qkvz",0,27457],[0,"out_proj",0,11508],[27,"gate_up_proj",1,251],[13,"qkv_proj",0,138],[47,"in_proj_qkvz",4,993],[33,"unmapped",null,2322],[58,"gate_up_proj",4,6003],[47,"unmapped",null,225],[32,"unmapped",null,1975],[48,"unmapped",null,4127],[45,"unmapped",null,879],[31,"unmapped",null,8],[48,"in_proj_qkvz",4,2175],[59,"gate_up_proj",4,3724],[40,"in_proj_qkvz",4,4],[29,"out_proj",4,151],[53,"gate_up_proj",4,128],[44,"down_proj",4,256],[41,"in_proj_qkvz",4,91],[28,"out_proj",4,74],[40,"qkv_proj",4,29],[27,"out_proj",4,2],[39,"qkv_proj",4,1],[19,"in_proj_qkvz",0,70],[6,"out_proj",0,27564],[31,"gate_up_proj",0,86223],[21,"down_proj",0,77851],[32,"gate_up_proj",0,48],[20,"down_proj",0,13358],[5,"out_proj",0,63522],[15,"qkv_proj",0,9797],[27,"gate_up_proj",0,28764],[16,"in_proj_qkvz",0,5628],[18,"in_proj_qkvz",0,29280],[16,"qkv_proj",0,19007],[28,"gate_up_proj",0,1800],[14,"qkv_proj",0,1579],[30,"gate_up_proj",0,5009],[25,"qkv_proj",2,1],[32,"out_proj",4,2767],[48,"down_proj",4,5479],[46,"unmapped",null,4305],[47,"down_proj",4,25],[33,"out_proj",4,2737],[43,"unmapped",null,914],[57,"gate_up_proj",4,129],[43,"in_proj_qkvz",4,61],[43,"qkv_proj",4,32],[44,"in_proj_qkvz",4,35],[30,"out_proj",4,29],[36,"gate_up_proj",2,291],[28,"in_proj_qkvz",2,282],[10,"out_proj",2,47],[28,"qkv_proj",2,106],[8,"out_proj",2,103],[9,"out_proj",2,104],[15,"down_proj",0,78],[17,"qkv_proj",0,12],[44,"unmapped",null,590],[21,"in_proj_qkvz",0,21],[7,"out_proj",1,8],[33,"gate_up_proj",1,58],[22,"down_proj",1,53],[20,"in_proj_qkvz",0,33],[6,"out_proj",1,65],[32,"gate_up_proj",1,38],[23,"down_proj",1,59],[18,"qkv_proj",0,10],[5,"out_proj",1,174],[30,"gate_up_proj",1,21],[21,"down_proj",1,6],[29,"gate_up_proj",1,68],[19,"qkv_proj",0,9],[4,"out_proj",0,36],[15,"out_proj",3,34],[33,"out_proj_or_down_proj",null,119],[14,"out_proj",3,30],[27,"unmapped",null,15],[32,"out_proj_or_down_proj",null,8],[26,"unmapped",null,1],[16,"out_proj",3,4],[19,"down_proj",0,174],[37,"unmapped",null,155],[21,"out_proj",3,99],[35,"unmapped",null,95],[33,"qkv_proj",3,32],[34,"unmapped",null,48],[20,"out_proj",3,28],[37,"in_proj_qkvz",3,158],[24,"out_proj",3,205],[49,"unmapped",null,256],[40,"unmapped",null,253],[23,"out_proj",3,50],[22,"out_proj",3,2],[39,"unmapped",null,3],[38,"in_proj_qkvz",3,34],[38,"gate_up_proj",1,45],[17,"down_proj",1,111],[37,"gate_up_proj",1,84],[18,"down_proj",1,76],[1,"out_proj",1,25],[15,"down_proj",1,64],[12,"qkv_proj",0,101],[0,"out_proj",1,39],[36,"gate_up_proj",1,46],[35,"gate_up_proj",1,16],[4,"out_proj",1,40],[3,"out_proj",1,31],[16,"down_proj",1,5],[2,"out_proj",1,2],[34,"gate_up_proj",1,1],[2,"out_proj",0,75],[3,"out_proj",0,67],[14,"in_proj_qkvz",0,187],[18,"down_proj",0,58],[29,"gate_up_proj",0,140],[17,"down_proj",0,47],[26,"gate_up_proj",1,1],[41,"qkv_proj",4,2],[42,"in_proj_qkvz",4,1],[7,"out_proj",0,2],[24,"down_proj",1,10],[31,"gate_up_proj",1,9],[20,"qkv_proj",0,3],[17,"out_proj",3,38],[34,"out_proj_or_down_proj",null,1],[28,"unmapped",null,16],[18,"out_proj",3,22],[38,"unmapped",null,5]]}}};
+
+// A combo is only worth a dedicated legend color if it ever renders as a visually distinguishable
+// segment somewhere -- i.e. its stacked-bar slice reaches at least VISIBLE_PX tall in at least one
+// bin of at least one of the 4 charts, using the exact same pct/scale math the renderer itself uses.
+const CHART_H = 210, CHART_PAD_T = 12, CHART_PAD_B = 24;
+const CHART_PLOT_H = CHART_H - CHART_PAD_T - CHART_PAD_B;
+const VISIBLE_PX = 3;
+
+function maxSegHeightsPx(bins, series) {
+  const nBins = bins.length - 1;
+  const totals = Array(nBins).fill(0);
+  series.bin_cats.forEach(([bi, , , cnt]) => { totals[bi] += cnt; });
+  const pctArr = totals.map(cnt => 100 * cnt / series.n);
+  const maxPct = Math.max(...pctArr) * 1.08;
+  const grouped = Array.from({length: nBins}, () => []);
+  series.bin_cats.forEach(([bi, cat, band, cnt]) => grouped[bi].push([cat, band, cnt]));
+  const maxPx = {};
+  for (let i = 0; i < nBins; i++) {
+    const entries = grouped[i];
+    if (!entries.length) continue;
+    const binCount = entries.reduce((s, [, , c]) => s + c, 0);
+    entries.forEach(([cat, band, cnt]) => {
+      const pct = pctArr[i] * cnt / binCount;
+      const px = (pct / maxPct) * CHART_PLOT_H;
+      const key = cat + '|' + band;
+      maxPx[key] = Math.max(maxPx[key] || 0, px);
+    });
+  }
+  return maxPx;
+}
+
+const maxPxByKey = {};
+Object.values(SHAPE_MBAND_DATA.series).forEach(s => {
+  const px = maxSegHeightsPx(SHAPE_MBAND_DATA.bins, s);
+  Object.entries(px).forEach(([key, v]) => { maxPxByKey[key] = Math.max(maxPxByKey[key] || 0, v); });
+});
+const isVisible = key => (maxPxByKey[key] || 0) >= VISIBLE_PX;
+
+// Build the flat legend from every (shape, M-band) combo that's actually visible somewhere.
+const seenCombos = new Set();
+Object.values(SHAPE_MBAND_DATA.series).forEach(s => {
+  s.bin_cats.forEach(([, cat, band]) => seenCombos.add(cat + '|' + band));
+});
+const comboList = [];
+SHAPE_CATS.forEach(c => {
+  if (c.key === 'unmapped') return;
+  for (let b = 0; b < BAND_LABELS.length; b++) {
+    const key = c.key + '|' + b;
+    if (seenCombos.has(key) && isVisible(key)) comboList.push({ cat: c.key, band: b });
+  }
+});
+if (seenCombos.has('unmapped|null') && isVisible('unmapped|null')) comboList.push({ cat: 'unmapped', band: null });
+
+// One column per shape (same layer, same column), each column header-labeled once and its
+// rows showing just the M-band -- entries stay grouped and ordered exactly as in comboList
+// (already shape-then-band order), so nothing needs re-sorting here.
+const colsByCat = new Map();
+comboList.forEach(({ cat, band }) => {
+  if (!colsByCat.has(cat)) colsByCat.set(cat, []);
+  colsByCat.get(cat).push(band);
+});
+document.getElementById('legend-combos').innerHTML = [...colsByCat.entries()].map(([cat, bands]) => {
+  const rows = bands.map(band => {
+    const label = band == null ? CAT_LABEL[cat] : BAND_LABELS[band];
+    return `<div class="legend-item"><span class="swatch sq" style="background:${bandFill(CAT_COLOR[cat], band)}"></span>${label}</div>`;
+  }).join('');
+  const title = cat === 'unmapped' ? '' : `<div class="legend-col-title">${CAT_LABEL[cat]} (${CAT_DIMS[cat]})</div>`;
+  return `<div class="legend-col">${title}${rows}</div>`;
+}).join('');
+
+function fillFor(cat, band) {
+  const key = cat + '|' + band;
+  if (isVisible(key)) return bandFill(CAT_COLOR[cat], band);
+  // too thin to ever perceive as its own shade -- fall back to the shape's plain color (or gray for
+  // unmapped), so it still reads as "this shape" without pretending to carry M information no one can see.
+  return cat === 'unmapped' ? 'var(--s-gray)' : CAT_COLOR[cat];
+}
+
+function renderShapeDistChart(bins, series, containerId) {
+  const W = 880, H = CHART_H, PAD_L = 48, PAD_R = 16, PAD_T = CHART_PAD_T, PAD_B = CHART_PAD_B;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const nBins = bins.length - 1;
+  const logLo = Math.log10(bins[0]), logHi = Math.log10(bins[bins.length-1]);
+  const xPos = v => PAD_L + (Math.log10(v) - logLo) / (logHi - logLo) * plotW;
+
+  const n = series.n;
+  const binCats = series.bin_cats;
+  const totals = Array(nBins).fill(0);
+  binCats.forEach(([bi, , , cnt]) => { totals[bi] += cnt; });
+  const pctArr = totals.map(cnt => 100 * cnt / n);
+  const maxPct = Math.max(...pctArr) * 1.08;
+  const yPos = v => PAD_T + plotH - (v / maxPct) * plotH;
+
+  [0, maxPct*0.25, maxPct*0.5, maxPct*0.75, maxPct].forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toFixed(1) + '%'; svg.appendChild(t);
+  });
+
+  niceLogTicks(bins[0], bins[bins.length-1]).forEach(v => {
+    const x = xPos(v);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 8); t.setAttribute('text-anchor', 'middle');
+    t.textContent = v >= 1000 ? (v/1000)+'ms' : v+'µs'; svg.appendChild(t);
+  });
+
+  const grouped = Array.from({length: nBins}, () => []);
+  binCats.forEach(([bi, cat, band, cnt]) => grouped[bi].push([cat, band, cnt]));
+
+  for (let i = 0; i < nBins; i++) {
+    const entries = grouped[i];
+    if (!entries.length) continue;
+    const x0 = xPos(bins[i]), x1 = xPos(bins[i+1]);
+    const width = Math.max(0.4, x1 - x0 - 0.4);
+    const binCount = entries.reduce((sum, [, , cnt]) => sum + cnt, 0);
+    let stacked = 0;
+    // stable draw order: fixed category order, then by band ascending
+    SHAPE_CATS.map(c => c.key).forEach(cat => {
+      entries.filter(([k]) => k === cat).sort((a, b) => (a[1] ?? -1) - (b[1] ?? -1)).forEach(([, band, cnt]) => {
+        const pct = pctArr[i] * cnt / binCount;
+        const top = yPos(stacked + pct), bottom = yPos(stacked);
+        const rect = document.createElementNS(svgNS, 'rect');
+        rect.setAttribute('x', x0); rect.setAttribute('y', top);
+        rect.setAttribute('width', width); rect.setAttribute('height', Math.max(0.25, bottom - top));
+        rect.setAttribute('fill', fillFor(cat, band)); rect.setAttribute('stroke', 'var(--surface-1)');
+        rect.setAttribute('stroke-width', '0.2'); rect.style.cursor = 'pointer';
+        const bandTxt = band == null ? '&mdash;' : BAND_LABELS[band];
+        bindTooltip(rect, () => `<div class="row"><span class="k">range</span><b>${bins[i].toFixed(0)}&ndash;${bins[i+1].toFixed(0)}µs</b></div><div class="row"><span class="k">shape</span><b>${CAT_LABEL[cat]}</b></div><div class="row"><span class="k">M-band</span><b>${bandTxt}</b></div><div class="row"><span class="k">share</span><b>${pct.toFixed(2)}%</b></div><div class="row"><span class="k">launches</span><b>${cnt.toLocaleString()}</b></div>`);
+        svg.appendChild(rect);
+        stacked += pct;
+      });
+    });
+  }
+
+  function vline(v, dash, labelText) {
+    const x = xPos(v);
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x); l.setAttribute('x2', x); l.setAttribute('y1', PAD_T); l.setAttribute('y2', PAD_T + plotH);
+    l.setAttribute('stroke', 'var(--text-primary)'); l.setAttribute('stroke-width', '1.25'); l.setAttribute('stroke-opacity', '0.55');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(l);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', PAD_T + 8); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', 'var(--text-primary)'); t.textContent = labelText;
+    svg.appendChild(t);
+  }
+  vline(series.mean, null, 'mean');
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderShapeDistChart(SHAPE_MBAND_DATA.bins, SHAPE_MBAND_DATA.series.c1_default, 'chart-dist-c1-default');
+renderShapeDistChart(SHAPE_MBAND_DATA.bins, SHAPE_MBAND_DATA.series.c1_tuned, 'chart-dist-c1-tuned');
+renderShapeDistChart(SHAPE_MBAND_DATA.bins, SHAPE_MBAND_DATA.series.c64_default, 'chart-dist-c64-default');
+renderShapeDistChart(SHAPE_MBAND_DATA.bins, SHAPE_MBAND_DATA.series.c64_tuned, 'chart-dist-c64-tuned');
+renderShapeDistChart(SHAPE_MBAND_DATA.bins, SHAPE_MBAND_DATA.series.c64_groupfix, 'chart-dist-c64-groupfix');
+</script>

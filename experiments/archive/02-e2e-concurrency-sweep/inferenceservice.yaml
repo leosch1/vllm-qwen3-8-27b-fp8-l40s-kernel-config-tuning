@@ -1,0 +1,60 @@
+# Separate name/route from production qwen-27b -- doesn't touch, stop, or
+# conflict with it. Same storageUri (public model, same S3 mirror), same
+# resources/tolerations as production for a fair comparison.
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen-27b-pr-evidence
+  namespace: enterprise-ai
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+    security.opendatahub.io/enable-auth: "true"
+    serving.knative.openshift.io/enablePassthrough: "true"
+    openshift.io/display-name: "Qwen3.8-27B-FP8 - PR Evidence (v0.27.1)"
+    serving.kserve.io/storageSecretName: nutanix-objects-credentials
+  labels:
+    opendatahub.io/dashboard: "true"
+    networking.kserve.io/visibility: exposed
+    opendatahub.io/genai-asset: "true"
+spec:
+  predictor:
+    # Scoped SA (see profiling-scc.yaml) for the GPU-profiling pass: grants
+    # only this pod permission to request +SYS_ADMIN/runAsUser:0, confirmed
+    # to be the only container-level requirement (direct A/B test on a
+    # throwaway pod ruled out the driver-param and /dev/nvidia-caps fixes we
+    # originally thought were also needed).
+    serviceAccountName: qwen3-8-27b-fp8-pr-evidence-profiler
+    # nvidia-nsight-profile: enabled -- watched by the Nsight Operator's
+    # injector webhook (default-profile-config's podObjectSelector), which
+    # wraps the matching container's process with `nsys profile
+    # --start-later=true` automatically. Remember: DCGM must be paused
+    # (dcgmi profile --pause on this node's DCGM pod) for the actual
+    # collection to get real hardware counters, not just the previous
+    # software-instrumented fallback -- resume it after.
+    labels:
+      nvidia-nsight-profile: enabled
+      kueue.x-k8s.io/queue-name: gpu-autotune
+    tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Equal
+      value: present
+    deploymentStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: vllm-qwen3-8-27b-fp8-pr-evidence-gpu
+      storageUri: "s3://enterprise-ai-models/qwen-27b-fp8"
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"

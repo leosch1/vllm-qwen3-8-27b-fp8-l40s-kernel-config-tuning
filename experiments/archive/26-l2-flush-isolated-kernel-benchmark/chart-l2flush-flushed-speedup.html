@@ -1,0 +1,187 @@
+<title>L2-Flush Config, Flushed-Pressure Kernel Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, L2-flush-tuned config vs. default, under L2-flush pressure</h1>
+  <p class="sub">Same 175-point grid as <a href="chart-l2flush-cycling-speedup.html">this folder's cycling-pressure chart</a>, but both configs now timed under the SAME mechanism that actually produced the winning config &mdash; <a href="../25-l2-flush-autotune-rerun/">24</a>'s direct L2 flush before every timed launch &mdash; instead of 17's model-specific 64-copy cycling. Experiment 25, second pass.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Mean speedup <b>+15.5%</b> across all 175 points, positive at 174/175 (99.4%) &mdash; a single negative point anywhere (<code>down_proj</code>, M=768, -4.2%). Compare directly against <a href="chart-l2flush-cycling-speedup.html">the cycling-pressure chart</a>'s same 175 points: mean speedup nearly doubles (+7.9% &rarr; +15.5%) and the negative-point count collapses (17/175 &rarr; 1/175) once the validation methodology matches the tuning methodology exactly. At the large-M anchors that actually matter (M&ge;512): mean +11.75%, only 1/55 negative. This is the more direct answer to "does the fix win under its own methodology" &mdash; the cycling chart answers the different, harder question of whether it still generalizes to a workload pattern it wasn't tuned against.</p>
+</div>
+
+<script>
+const DATA = {
+  "gate_up_proj": [[1,13.5],[2,6.1],[3,6.7],[4,8.1],[6,8.4],[8,7.5],[12,7.0],[16,5.3],[20,6.8],[24,6.1],[28,5.4],[32,7.7],[40,5.7],[48,5.9],[56,6.1],[64,6.1],[80,3.8],[96,5.8],[112,5.7],[128,4.4],[160,18.3],[200,7.7],[256,7.1],[384,20.9],[512,16.9],[768,12.5],[1024,12.1],[1280,11.0],[1536,9.2],[1792,9.6],[2048,10.6],[2560,14.2],[3072,10.5],[3584,11.3],[4096,5.3]],
+  "in_proj_qkvz": [[1,21.5],[2,15.4],[3,14.4],[4,13.8],[6,13.6],[8,16.3],[12,13.4],[16,18.5],[20,14.5],[24,15.8],[28,13.4],[32,15.9],[40,13.8],[48,14.6],[56,12.8],[64,14.0],[80,13.1],[96,8.5],[112,9.1],[128,17.3],[160,2.7],[200,9.7],[256,8.6],[384,9.3],[512,17.6],[768,14.0],[1024,13.9],[1280,11.0],[1536,10.5],[1792,9.9],[2048,8.5],[2560,7.5],[3072,13.4],[3584,14.0],[4096,13.4]],
+  "qkv_proj": [[1,21.7],[2,17.8],[3,21.4],[4,20.7],[6,21.0],[8,21.7],[12,20.7],[16,19.5],[20,19.4],[24,19.1],[28,20.0],[32,18.1],[40,17.8],[48,22.9],[56,22.3],[64,16.8],[80,7.1],[96,18.6],[112,12.1],[128,14.5],[160,15.8],[200,14.3],[256,12.7],[384,7.6],[512,13.1],[768,13.8],[1024,9.8],[1280,13.5],[1536,13.1],[1792,11.4],[2048,11.3],[2560,11.4],[3072,10.6],[3584,10.3],[4096,12.9]],
+  "down_proj": [[1,29.6],[2,27.9],[3,29.0],[4,27.6],[6,24.2],[8,28.4],[12,28.7],[16,26.1],[20,25.0],[24,28.1],[28,30.2],[32,27.0],[40,27.0],[48,23.6],[56,14.7],[64,25.9],[80,25.0],[96,21.6],[112,6.7],[128,18.9],[160,18.2],[200,13.4],[256,14.9],[384,10.3],[512,8.7],[768,-4.2],[1024,9.2],[1280,12.5],[1536,10.1],[1792,13.7],[2048,9.9],[2560,12.3],[3072,13.4],[3584,13.8],[4096,12.4]],
+  "out_proj": [[1,26.0],[2,24.3],[3,27.3],[4,23.8],[6,27.5],[8,25.5],[12,26.6],[16,26.2],[20,26.4],[24,25.6],[28,22.4],[32,23.7],[40,24.7],[48,23.8],[56,26.1],[64,26.8],[80,29.7],[96,29.6],[112,15.9],[128,26.7],[160,13.3],[200,20.7],[256,22.2],[384,18.0],[512,23.9],[768,11.2],[1024,17.4],[1280,12.1],[1536,11.7],[1792,14.8],[2048,11.6],[2560,10.9],[3072,12.3],[3584,11.7],[4096,8.5]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SHAPES.forEach(([name, color]) => {
+  const data = DATA[name];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

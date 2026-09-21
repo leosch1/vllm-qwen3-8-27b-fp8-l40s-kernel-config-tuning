@@ -1,0 +1,175 @@
+<title>Three Fixes, Output Tok/s Delta vs. Default</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --groupfix:       #eb6834;
+  --cache-aware:    #8b5cf6;
+  --l2-flush:       #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --groupfix: #d95926; --cache-aware: #9f7aea; --l2-flush: #199e70;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --groupfix: #d95926; --cache-aware: #9f7aea; --l2-flush: #199e70;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 780px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 660px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 18px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 640px; }
+</style>
+
+<div class="viz-root">
+  <h1>Output tok/s delta vs. default: three independent fixes, same sweep, same default baseline</h1>
+  <p class="sub">Same 10-point <code>vllm bench serve</code> concurrency sweep, same reused <code>default</code> baseline (<a href="../19-cache-aware-config-e2e-validation/">18</a> round 2's), recomputed vs. that one baseline for all three so the percentages are directly comparable. "Groupfix" is `15`'s hand patch. "Cache-aware" is `17`'s 64-copy-cycling-fixed autotuner rerun, deployed end to end (`18`, round 2). "L2-flush" is `24`'s general, model-independent L2-flush-based autotuner rerun, deployed end to end (this experiment).</p>
+
+  <div class="legend">
+    <span class="item"><span class="swatch" style="border-color: var(--groupfix);"></span>groupfix (hand patch)</span>
+    <span class="item"><span class="swatch" style="border-color: var(--cache-aware);"></span>cache-aware (64-copy cycling fix)</span>
+    <span class="item"><span class="swatch" style="border-color: var(--l2-flush);"></span>l2-flush (general L2-flush fix)</span>
+  </div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">All three independently-derived fixes never regress vs. <code>default</code> anywhere in the sweep, from +28% to +31% at c=1 down to +2.7-3.9% at c=128 -- the exact range where the original unfixed <code>tuned</code> config regressed to -4.2% (see <a href="../19-cache-aware-config-e2e-validation/">18</a>). L2-flush and cache-aware track each other within &plusmn;1.3% at every single point (well inside sweep-to-sweep noise), directly confirming at the e2e level what the kernel-level cross-check (<a href="../25-l2-flush-autotune-rerun/">24</a>) already found in isolation: the general, model-independent L2-flush mechanism delivers the same real production benefit as the model-specific 64-copy-cycling fix it's meant to replace. See <a href="chart-e2e-tuned-vs-l2flush.html">the two-line version</a> for a cleaner side-by-side against the original, unfixed <code>tuned</code> config specifically.</p>
+</div>
+
+<script>
+const GROUPFIX = [[1,28.3],[2,10.0],[4,6.9],[8,7.0],[16,6.3],[32,6.6],[48,5.1],[64,3.2],[96,3.4],[128,2.7]];
+const CACHE_AWARE = [[1,31.2],[2,13.3],[4,8.4],[8,10.1],[16,7.8],[32,8.0],[48,7.1],[64,6.0],[96,4.1],[128,3.9]];
+const L2FLUSH = [[1,30.5],[2,13.7],[4,7.0],[8,10.2],[16,7.5],[32,8.1],[48,6.7],[64,5.9],[96,4.1],[128,3.8]];
+
+const W = 720, H = 340, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const xs = GROUPFIX.map(p=>p[0]);
+const xMin = Math.log2(Math.min(...xs)), xMax = Math.log2(Math.max(...xs));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = [...GROUPFIX, ...CACHE_AWARE, ...L2FLUSH].map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+xs.forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = '--max-concurrency';
+svg.appendChild(xlab);
+
+function drawLine(data, color) {
+  let d = '';
+  data.forEach(([c,v], i) => { d += (i===0?'M':'L') + xPos(c) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2.5);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(path);
+}
+
+drawLine(GROUPFIX, 'var(--groupfix)');
+drawLine(CACHE_AWARE, 'var(--cache-aware)');
+drawLine(L2FLUSH, 'var(--l2-flush)');
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+function drawDots(data, color, label) {
+  data.forEach(([c,v]) => {
+    const x = xPos(c), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">concurrency</span><b>${c}</b></div><div class="row"><span class="k">${label}</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+}
+
+drawDots(GROUPFIX, 'var(--groupfix)', 'groupfix vs. default');
+drawDots(CACHE_AWARE, 'var(--cache-aware)', 'cache-aware vs. default');
+drawDots(L2FLUSH, 'var(--l2-flush)', 'l2-flush vs. default');
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

@@ -1,0 +1,202 @@
+<title>Gate-Up-Proj Fix Comparison</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --tuned:          #85837c;
+  --singlefix:      #e34948;
+  --groupfix:       #2a78d6;
+  --cache-aware:    #1baf7a;
+  --marker:         #52514e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --tuned: #8f8d84; --singlefix: #e66767; --groupfix: #3987e5; --cache-aware: #199e70;
+    --marker: #c3c2b7;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --tuned: #8f8d84; --singlefix: #e66767; --groupfix: #3987e5; --cache-aware: #199e70;
+  --marker: #c3c2b7;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 700px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.markerline { stroke: var(--marker); stroke-width: 1.25; stroke-dasharray: 4 3; opacity: 0.7; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.marker-text { fill: var(--text-secondary); font-size: 10.5px; font-weight: 600; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 680px; }
+.note b { color: var(--text-secondary); }
+</style>
+
+<div class="viz-root">
+  <h1>gate_up_proj isolated kernel speedup vs. default, four configs overlaid (cache-cycling)</h1>
+  <p class="sub">All four lines come from the same 175-point cache-cycling grid used throughout <a href="./README.md">this experiment</a> (<code>tuned</code>: Part 5; <code>groupfix</code>: Part 4; cache-aware-tuned: Part 2; <code>singlefix</code>: this pass) &mdash; isolated to <code>gate_up_proj</code>, the one shape where all four configs actually differ from <code>default</code>'s <code>GROUP_SIZE_M</code> choice. <code>singlefix</code> is byte-identical to <code>tuned</code> everywhere except the marked M=2048 anchor.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Confirms the expected localization directly: <b>singlefix tracks tuned's curve almost exactly everywhere</b> (within &plusmn;1.5pp at every other large-M anchor: 512/1024/1536/3072/4096) <b>and diverges from it only right at M=2048</b> &mdash; the one anchor it actually changes &mdash; jumping from tuned's +5.8% to +8.9% (and the neighboring held-out M=2560, which maps to the same changed anchor, rises too: +8.1%&rarr;+9.1%). <code>groupfix</code> and cache-aware-tuned, which both change more than this one anchor, separate from <code>tuned</code>'s curve well before M=2048 and stay separated at every subsequent large-M point &mdash; the visible signature of a broader fix vs. this experiment's maximally narrow one.</p>
+</div>
+
+<script>
+const DATA = {
+  "tuned": [[1,18.1],[2,3.5],[3,1.4],[4,1.5],[6,1.6],[8,0.9],[12,1.2],[16,-2.7],[20,-0.3],[24,4.1],[28,2.0],[32,2.1],[40,-15.7],[48,0.1],[56,0.9],[64,0.9],[80,-0.7],[96,-2.1],[112,-0.6],[128,0.2],[160,4.6],[200,7.6],[256,5.8],[384,9.2],[512,-4.0],[768,1.8],[1024,6.0],[1280,5.4],[1536,9.2],[1792,6.7],[2048,5.8],[2560,8.1],[3072,9.6],[3584,9.0],[4096,8.5]],
+  "singlefix": [[1,18.2],[2,4.5],[3,1.8],[4,0.1],[6,2.5],[8,2.0],[12,2.0],[16,3.3],[20,0.5],[24,2.5],[28,1.0],[32,-2.3],[40,-17.1],[48,-2.4],[56,1.0],[64,2.0],[80,-4.7],[96,-0.3],[112,-3.6],[128,-0.3],[160,4.5],[200,9.5],[256,5.9],[384,9.5],[512,-4.2],[768,0.6],[1024,5.4],[1280,5.2],[1536,7.7],[1792,6.7],[2048,8.9],[2560,9.1],[3072,9.3],[3584,8.9],[4096,9.1]],
+  "groupfix": [[1,19.3],[2,3.8],[3,1.3],[4,2.7],[6,2.1],[8,1.9],[12,1.6],[16,2.0],[20,1.3],[24,2.7],[28,2.6],[32,-1.7],[40,-16.3],[48,0.4],[56,0.8],[64,1.9],[80,-0.7],[96,-1.3],[112,0.7],[128,-2.7],[160,4.6],[200,7.8],[256,8.7],[384,9.5],[512,8.9],[768,7.4],[1024,10.6],[1280,6.3],[1536,10.8],[1792,7.6],[2048,8.7],[2560,9.3],[3072,14.2],[3584,11.7],[4096,15.0]],
+  "cache_aware": [[1,20.1],[2,7.6],[3,5.8],[4,6.1],[6,5.4],[8,5.6],[12,6.5],[16,6.7],[20,4.0],[24,0.4],[28,1.3],[32,4.5],[40,4.2],[48,3.9],[56,3.7],[64,7.6],[80,-0.3],[96,-0.6],[112,-3.7],[128,4.1],[160,1.1],[200,7.7],[256,6.0],[384,9.6],[512,10.4],[768,10.4],[1024,10.2],[1280,9.1],[1536,9.2],[1792,9.5],[2048,11.1],[2560,9.4],[3072,10.5],[3584,8.8],[4096,9.1]]
+};
+
+const SERIES = [
+  ["tuned", "var(--tuned)", "tuned (unpatched)"],
+  ["singlefix", "var(--singlefix)", "singlefix (this pass)"],
+  ["groupfix", "var(--groupfix)", "groupfix"],
+  ["cache_aware", "var(--cache-aware)", "cache-aware-tuned"],
+];
+
+const legend = document.getElementById('legend');
+SERIES.forEach(([key, color, label]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${label}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 380, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["tuned"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+// vertical marker at M=2048 -- the one anchor singlefix actually changes
+const markerX = xPos(2048);
+const markerLine = document.createElementNS(svgNS, 'line');
+markerLine.setAttribute('class', 'markerline');
+markerLine.setAttribute('x1', markerX); markerLine.setAttribute('x2', markerX);
+markerLine.setAttribute('y1', PAD_T); markerLine.setAttribute('y2', PAD_T + plotH);
+svg.appendChild(markerLine);
+const markerLabel = document.createElementNS(svgNS, 'text');
+markerLabel.setAttribute('class', 'marker-text');
+markerLabel.setAttribute('x', markerX); markerLabel.setAttribute('y', PAD_T - 4);
+markerLabel.setAttribute('text-anchor', 'middle');
+markerLabel.textContent = 'M=2048 (the changed anchor)';
+svg.appendChild(markerLabel);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SERIES.forEach(([key, color, label]) => {
+  const data = DATA[key];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', m === 2048 ? 4.5 : 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${label}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup vs. default</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

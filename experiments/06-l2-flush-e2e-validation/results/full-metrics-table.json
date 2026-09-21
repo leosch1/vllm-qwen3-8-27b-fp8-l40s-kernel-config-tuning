@@ -1,0 +1,15 @@
+{
+  "description": "Full benchmark metrics behind the same sweep as e2e-comparison.json's l2_flush series: default config vs. the retuned config from ../04-l2-flush-retune/, real end-to-end serving.",
+  "rows": [
+    {"concurrency": 1,   "tok_s_default": 30.85,  "tok_s_l2flush": 40.25, "ttft_ms_default": 118.5,  "ttft_ms_l2flush": 120.8,  "tpot_ms_default": 31.74,  "tpot_ms_l2flush": 24.08},
+    {"concurrency": 2,   "tok_s_default": 66.04,  "tok_s_l2flush": 75.07, "ttft_ms_default": 165.4,  "ttft_ms_l2flush": 160.5,  "tpot_ms_default": 29.21,  "tpot_ms_l2flush": 25.58},
+    {"concurrency": 4,   "tok_s_default": 126.55, "tok_s_l2flush": 135.42,"ttft_ms_default": 265.5,  "ttft_ms_l2flush": 354.7,  "tpot_ms_default": 29.76,  "tpot_ms_l2flush": 26.97},
+    {"concurrency": 8,   "tok_s_default": 226.15, "tok_s_l2flush": 249.27,"ttft_ms_default": 441.7,  "ttft_ms_l2flush": 446.2,  "tpot_ms_default": 32.15,  "tpot_ms_l2flush": 28.82},
+    {"concurrency": 16,  "tok_s_default": 379.67, "tok_s_l2flush": 408.28,"ttft_ms_default": 652.9,  "ttft_ms_l2flush": 645.8,  "tpot_ms_default": 37.31,  "tpot_ms_l2flush": 34.39},
+    {"concurrency": 32,  "tok_s_default": 572.18, "tok_s_l2flush": 618.54,"ttft_ms_default": 943.6,  "ttft_ms_l2flush": 909.2,  "tpot_ms_default": 48.88,  "tpot_ms_l2flush": 44.93},
+    {"concurrency": 48,  "tok_s_default": 696.94, "tok_s_l2flush": 743.64,"ttft_ms_default": 1070.9, "ttft_ms_l2flush": 1032.4, "tpot_ms_default": 60.91,  "tpot_ms_l2flush": 56.86},
+    {"concurrency": 64,  "tok_s_default": 773.25, "tok_s_l2flush": 819.25,"ttft_ms_default": 1154.5, "ttft_ms_l2flush": 1114.2, "tpot_ms_default": 74.22,  "tpot_ms_l2flush": 69.86},
+    {"concurrency": 96,  "tok_s_default": 875.08, "tok_s_l2flush": 911.39,"ttft_ms_default": 1307.8, "ttft_ms_l2flush": 1267.9, "tpot_ms_default": 100.09, "tpot_ms_l2flush": 96.02},
+    {"concurrency": 128, "tok_s_default": 932.82, "tok_s_l2flush": 968.23,"ttft_ms_default": 1443.1, "ttft_ms_l2flush": 1394.9, "tpot_ms_default": 126.68, "tpot_ms_l2flush": 122.02}
+  ]
+}

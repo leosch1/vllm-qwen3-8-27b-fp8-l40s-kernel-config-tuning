@@ -1,0 +1,29 @@
+vllm bench serve --max-concurrency 64 --num-prompts 500 --request-rate inf
+Config: default, instance A
+nsys collection: 26ff64c4-66fe-4eb4-8d21-d766ade1e27e
+
+============ Serving Benchmark Result ============
+Successful requests:                     500
+Failed requests:                         0
+Maximum request concurrency:             64
+Benchmark duration (s):                  83.64
+Total input tokens:                      154206
+Total generated tokens:                  64000
+Request throughput (req/s):              5.98
+Output token throughput (tok/s):         765.16
+Peak output token throughput (tok/s):    1216.00
+Peak concurrent requests:                96.00
+Total token throughput (tok/s):          2608.78
+---------------Time to First Token----------------
+Mean TTFT (ms):                          1297.45
+Median TTFT (ms):                        1249.87
+P99 TTFT (ms):                           3913.92
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          72.57
+Median TPOT (ms):                        73.19
+P99 TPOT (ms):                           80.87
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           72.15
+Median ITL (ms):                         53.78
+P99 ITL (ms):                            415.88
+==================================================

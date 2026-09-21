@@ -1,0 +1,44 @@
+# Minimal throwaway Job, purely to get access to the nsys CLI so we can
+# re-export additional tables (NVTX_EVENTS) from an ALREADY-CAPTURED local
+# .nsys-rep -- no model load, no GPU traffic, no new capture needed. Carries
+# the same nvidia-nsight-profile label + GPU request our profiling pods use,
+# to test whether that alone triggers the nsys binary injection outside of
+# a full InferenceService. Job, not bare Pod -- Kueue's pod-integration
+# isn't wired up on this cluster for bare Pods (scheduling gate never
+# clears), but every Job in this project has scheduled fine.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nsys-export-helper
+  namespace: enterprise-ai
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-autotune
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: gpu-autotune
+        nvidia-nsight-profile: enabled
+    spec:
+      restartPolicy: Never
+      serviceAccountName: qwen3-8-27b-fp8-pr-evidence-profiler
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      containers:
+        - name: nsys-export-helper
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          securityContext:
+            runAsUser: 0
+            capabilities:
+              add:
+                - SYS_ADMIN
+          command: ["/bin/bash", "-c", "sleep 3600"]
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+            limits:
+              nvidia.com/gpu: "1"

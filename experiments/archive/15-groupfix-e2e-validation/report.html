@@ -1,0 +1,872 @@
+<title>GROUP_SIZE_M Investigation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --page:        #f7f7f4;
+    --surface:     #ffffff;
+    --surface-2:   #fcfcfa;
+    --ink:         #16150f;
+    --ink-2:       #55534a;
+    --ink-muted:   #8b887c;
+    --grid:        #e4e1d6;
+    --baseline:    #c7c3b4;
+    --border:      rgba(22,21,15,0.09);
+    --border-strong: rgba(22,21,15,0.16);
+    --accent:      #1c5cab;
+    --accent-soft: #e8f0fb;
+
+    --default:      #2a78d6;
+    --default-soft: #cde2fb;
+    --tuned:        #eb6834;
+    --tuned-soft:   #fbdccb;
+    --groupfix:      #1baf7a;
+    --groupfix-soft: #cdeee1;
+
+    --good:     #0ca30c;
+    --critical: #d03b3b;
+
+    --tooltip-bg: #16150f;
+    --tooltip-ink: #f7f7f4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:        #0c0c0a;
+      --surface:     #181713;
+      --surface-2:   #141310;
+      --ink:         #f6f5f0;
+      --ink-2:       #c4c1b3;
+      --ink-muted:   #8b887c;
+      --grid:        #2c2a24;
+      --baseline:    #3d3a31;
+      --border:      rgba(246,245,240,0.10);
+      --border-strong: rgba(246,245,240,0.18);
+      --accent:      #5b9ce6;
+      --accent-soft: #182943;
+
+      --default:      #3987e5;
+      --default-soft: #16324f;
+      --tuned:        #d95926;
+      --tuned-soft:   #4a2c1c;
+      --groupfix:      #199e70;
+      --groupfix-soft: #123a2c;
+
+      --good:     #2fbf2f;
+      --critical: #e66767;
+
+      --tooltip-bg: #f6f5f0;
+      --tooltip-ink: #16150f;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:        #0c0c0a;
+    --surface:     #181713;
+    --surface-2:   #141310;
+    --ink:         #f6f5f0;
+    --ink-2:       #c4c1b3;
+    --ink-muted:   #8b887c;
+    --grid:        #2c2a24;
+    --baseline:    #3d3a31;
+    --border:      rgba(246,245,240,0.10);
+    --border-strong: rgba(246,245,240,0.18);
+    --accent:      #5b9ce6;
+    --accent-soft: #182943;
+
+    --default:      #3987e5;
+    --default-soft: #16324f;
+    --tuned:        #d95926;
+    --tuned-soft:   #4a2c1c;
+    --groupfix:      #199e70;
+    --groupfix-soft: #123a2c;
+
+    --good:     #2fbf2f;
+    --critical: #e66767;
+
+    --tooltip-bg: #f6f5f0;
+    --tooltip-ink: #16150f;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px 96px; }
+
+  header.hero {
+    padding: 72px 24px 40px;
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(680px 280px at 12% -20%, var(--accent-soft), transparent 70%);
+  }
+  header.hero .inner { max-width: 980px; margin: 0 auto; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 4.4vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+    max-width: 16ch;
+  }
+  .dek {
+    font-size: 17px;
+    color: var(--ink-2);
+    max-width: 60ch;
+    margin: 0 0 8px;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--ink-muted);
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .meta-row span { white-space: nowrap; }
+  .meta-row b { color: var(--ink-2); font-weight: 500; }
+
+  h2 {
+    font-size: 23px;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  h2 .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    color: var(--ink-muted);
+    border: 1px solid var(--border-strong);
+    border-radius: 100px;
+    padding: 3px 10px;
+  }
+  .section-dek { color: var(--ink-2); font-size: 15px; max-width: 66ch; margin: 0 0 28px; }
+  section.block { padding: 56px 0 8px; border-top: 1px solid var(--border); }
+  section.block:first-of-type { border-top: none; }
+
+  p { max-width: 68ch; }
+  p.note { color: var(--ink-2); font-size: 14.5px; }
+
+  /* stat tiles */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-top: 34px;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .stat .label { font-size: 12.5px; color: var(--ink-muted); }
+  .stat .value {
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .stat .value small { font-size: 14px; font-weight: 500; color: var(--ink-2); }
+  .stat .sub { font-size: 12.5px; color: var(--ink-muted); }
+  .stat .sub.good { color: var(--good); }
+
+  /* chart card */
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 22px 14px;
+    margin: 4px 0 22px;
+  }
+  .chart-card .chart-title { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .chart-card .chart-sub { font-size: 12.5px; color: var(--ink-muted); margin-bottom: 14px; }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 20px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    margin: 2px 0 14px;
+  }
+  .legend .item { display: inline-flex; align-items: center; gap: 7px; }
+  .legend .swatch-line { width: 16px; height: 2px; border-radius: 2px; }
+  .legend .swatch-box { width: 10px; height: 10px; border-radius: 3px; }
+
+  .chart-svg-wrap { position: relative; width: 100%; }
+  svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .baseline { stroke: var(--baseline); stroke-width: 1; }
+  .zeroline { stroke: var(--ink-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .axis-label { fill: var(--ink-muted); font-size: 11px; font-family: "IBM Plex Mono", monospace; }
+  .series-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .series-marker { stroke: var(--surface); stroke-width: 2; }
+  .bar-rect { rx: 4; }
+  .end-label { font-size: 11.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; }
+
+  .crosshair { stroke: var(--ink-muted); stroke-width: 1; opacity: 0; pointer-events: none; }
+  .hit-col { fill: transparent; pointer-events: all; }
+
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--tooltip-bg);
+    color: var(--tooltip-ink);
+    border-radius: 8px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    opacity: 0;
+    transform: translate(-50%, -100%);
+    transition: opacity 0.08s ease;
+    white-space: nowrap;
+    z-index: 5;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  }
+  .tooltip .t-head { font-family: "IBM Plex Mono", monospace; font-size: 11px; opacity: 0.65; margin-bottom: 5px; }
+  .tooltip .t-row { display: flex; align-items: center; gap: 7px; }
+  .tooltip .t-key { width: 10px; height: 2px; border-radius: 2px; flex: none; }
+  .tooltip .t-val { font-weight: 600; margin-left: auto; font-family: "IBM Plex Mono", monospace; }
+  .tooltip .t-name { opacity: 0.85; }
+
+  details.data-table { margin-top: 14px; }
+  details.data-table summary {
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    -webkit-user-select: none; user-select: none;
+  }
+  details.data-table summary:hover { color: var(--ink-2); }
+  details.data-table table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    font-family: "IBM Plex Mono", monospace;
+  }
+  details.data-table th, details.data-table td {
+    text-align: right;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  details.data-table th:first-child, details.data-table td:first-child { text-align: left; }
+  details.data-table thead th { color: var(--ink-muted); font-weight: 500; }
+
+  .callout {
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--tuned);
+    border-radius: 10px;
+    padding: 18px 20px;
+    background: var(--surface);
+    font-size: 14.5px;
+    color: var(--ink-2);
+    margin: 24px 0 8px;
+  }
+  .callout b { color: var(--ink); }
+  .callout.good { border-left-color: var(--groupfix); }
+
+  .kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 5px 16px;
+    font-size: 13.5px;
+    margin: 16px 0;
+  }
+  .kv dt { color: var(--ink-muted); font-family: "IBM Plex Mono", monospace; }
+  .kv dd { margin: 0; }
+  .kv code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+
+  footer {
+    padding: 40px 0 0;
+    color: var(--ink-muted);
+    font-size: 12.5px;
+    border-top: 1px solid var(--border);
+    margin-top: 32px;
+  }
+
+  @media (max-width: 720px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    header.hero { padding: 52px 20px 32px; }
+  }
+</style>
+
+<header class="hero">
+  <div class="inner">
+    <p class="eyebrow">Qwen3.8-27B-FP8 &middot; W8A8 block-scaled GEMM &middot; L40S</p>
+    <h1>Why the &ldquo;faster&rdquo; kernel config was slower in production</h1>
+    <p class="dek">
+      A Triton-autotuned config for <code class="mono">gate_up_proj</code> beat vLLM's default in every
+      isolated benchmark, then regressed real serving by up to <b>&minus;4.1%</b> at high concurrency.
+      Thirteen experiments chased hardware-level causes. The real one was sitting in the config file &mdash;
+      and the fix is now validated end-to-end, with real margins, not noise.
+    </p>
+    <div class="meta-row">
+      <span><b>Root cause:</b> <code class="mono">GROUP_SIZE_M</code></span>
+      <span><b>Shape:</b> N=17408, K=5120, M&ge;512</span>
+      <span><b>Hardware:</b> 2&times; NVIDIA L40S, TP=2</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="stats" aria-label="Headline figures">
+    <div class="stat">
+      <div class="label">GROUP_SIZE_M, tuned vs. default</div>
+      <div class="value">1 <small>vs 32</small></div>
+      <div class="sub">the L2-locality grid-swizzle knob &mdash; grouping disabled entirely</div>
+    </div>
+    <div class="stat">
+      <div class="label">DRAM Read, cold-weight cycling</div>
+      <div class="value">22.4<small>%</small> &rarr; 10.2<small>%</small></div>
+      <div class="sub good">flatter than default itself</div>
+    </div>
+    <div class="stat">
+      <div class="label">Tensor Active kept</div>
+      <div class="value">58.8<small>%</small></div>
+      <div class="sub">same-B baseline unchanged &mdash; no speed sacrificed</div>
+    </div>
+    <div class="stat">
+      <div class="label">e2e, groupfix vs. default</div>
+      <div class="value">never <small>negative</small></div>
+      <div class="sub good">+28.5% (c=1) to +2.9% (c=128) &mdash; every point</div>
+    </div>
+  </section>
+
+  <!-- ============ SECTION 1 : MECHANISM ============ -->
+  <section class="block" id="mechanism">
+    <h2>The mechanism <span class="tag">isolated kernel &middot; exp 14</span></h2>
+    <p class="section-dek">
+      Diffing the two configs surfaces one parameter that isn't a compute-shape choice at all:
+      <code class="mono">GROUP_SIZE_M</code>, Triton's L2-cache grid-swizzle knob. Default's value
+      (<code class="mono">32</code>) happens to equal its own tile count across M &mdash; it groups the
+      <i>entire</i> M range under one fixed weight-tile, so only ~0.64MB of the 89MB weight matrix
+      needs to be resident at a time. Tuned's value (<code class="mono">1</code>) disables grouping
+      entirely. The autotuner's benchmark harness always reuses the same warm tensor, so this
+      parameter had zero measurable effect where it was tuned &mdash; and landed on the worst possible
+      value for real serving's cold, contended cache.
+    </p>
+
+    <div class="chart-card">
+      <div class="chart-title">DRAM Read bandwidth, same weight vs. 64 distinct copies</div>
+      <div class="chart-sub">Matched GPU_METRICS, 4000 iterations/condition &middot; <code class="mono">groupfix</code> = tuned's exact config with only <code class="mono">GROUP_SIZE_M</code> changed 1&rarr;16</div>
+      <div id="chart-mechanism" class="chart-svg-wrap"></div>
+      <details class="data-table"><summary>View data as table</summary>
+        <table>
+          <thead><tr><th>Config</th><th>same-B</th><th>cold (64 copies)</th></tr></thead>
+          <tbody>
+            <tr><td>default</td><td>9.40%</td><td>9.34%</td></tr>
+            <tr><td>tuned</td><td>12.19%</td><td>22.87%</td></tr>
+            <tr><td>groupfix</td><td>10.13%</td><td>10.19%</td></tr>
+          </tbody>
+        </table>
+      </details>
+    </div>
+
+    <p class="note">
+      Changing <i>one</i> parameter &mdash; holding <code class="mono">BLOCK_SIZE_M=128</code>,
+      <code class="mono">num_warps=8</code>, <code class="mono">num_stages=3</code> (tuned's genuine
+      speed advantages) fixed &mdash; takes tuned's cold-cycling-sensitive signature and makes it
+      disappear, without touching its same-B Tensor Active (58.5% &rarr; 58.8%, unchanged).
+    </p>
+  </section>
+
+  <!-- ============ SECTION 2 : E2E VALIDATION ============ -->
+  <section class="block" id="e2e">
+    <h2>The e2e validation <span class="tag">real serving &middot; exp 15</span></h2>
+    <p class="section-dek">
+      Deployed all three configs on the real predictor, same node, same day, full concurrency
+      sweep (1&ndash;128) &mdash; to see whether the isolated fix survives contact with real traffic.
+      The first pass hit a false lead that made everything look noise-sized; corrected, the result
+      is clean and decisive.
+    </p>
+
+    <div class="chart-card">
+      <div class="chart-title">Output throughput vs. concurrency &mdash; corrected</div>
+      <div class="chart-sub">Same pod/node, one run per condition, CUDA graphs enabled &middot; <code class="mono">vllm bench serve</code>, matching experiment 02's exact traffic profile</div>
+      <div id="chart-sweep" class="chart-svg-wrap"></div>
+      <details class="data-table"><summary>View data as table</summary>
+        <table>
+          <thead><tr><th>concurrency</th><th>default</th><th>tuned</th><th>groupfix</th></tr></thead>
+          <tbody id="tbl-sweep"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <p>
+      The first full pass of this sweep showed every config running at roughly 30&ndash;80% of a
+      week-old baseline, and &mdash; worryingly &mdash; <code class="mono">tuned</code> trailing
+      <code class="mono">default</code> by a near-constant few percent basically everywhere, not
+      just at high concurrency like the original regression. Thermal throttling, power capping,
+      PCIe link degradation, NVLink, and other GPU-contending pods were all checked directly and
+      ruled out. <b>The real cause was three lines away in the deployment manifest</b>:
+      <code class="mono">--enforce-eager</code>, added to the shared servingruntime for an
+      experiment 10 diagnostic tool that was never actually exercised, silently disabling CUDA
+      graph capture/replay for every e2e run since &mdash; including this experiment's entire first
+      pass. It took a direct question (&ldquo;are you sure the pod matches production?&rdquo;) to
+      prompt the diff that found it.
+    </p>
+
+    <div class="chart-card">
+      <div class="chart-title">Diagnosing the false lead: eager mode's fixed per-step cost</div>
+      <div class="chart-sub"><code class="mono">default</code> config, same day, same pod &middot; TPOT with <code class="mono">--enforce-eager</code> minus TPOT with CUDA graphs restored</div>
+      <div id="chart-drift" class="chart-svg-wrap"></div>
+      <details class="data-table"><summary>View data as table</summary>
+        <table>
+          <thead><tr><th>concurrency</th><th>TPOT, eager</th><th>TPOT, graphs</th><th>delta</th></tr></thead>
+          <tbody id="tbl-drift"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <p>
+      A <i>constant percentage</i> would mean a proportional compute/bandwidth slowdown. What's
+      actually there is a roughly <b>fixed</b> extra cost per decode step &mdash; about
+      <b>+70ms at low concurrency, shrinking smoothly to +32ms at c=128</b> &mdash; diluted as more
+      useful work rides along with it per step. That's exactly the signature of losing CUDA graph
+      replay: eager mode re-pays Python dispatch and kernel-launch overhead on every single step,
+      a cost graphs skip almost entirely. With graphs restored, <code class="mono">default</code>
+      matches the original week-old baseline within 99.3&ndash;100.0% at every concurrency point
+      &mdash; there was no environment drift at all.
+    </p>
+
+    <div class="chart-card">
+      <div class="chart-title">tuned/groupfix vs. default, as % delta &mdash; corrected</div>
+      <div class="chart-sub">Zero line = tied with default &middot; dashed = original week-old <code class="mono">tuned</code>, for replication</div>
+      <div id="chart-validation" class="chart-svg-wrap"></div>
+      <details class="data-table"><summary>View data as table</summary>
+        <table>
+          <thead><tr><th>concurrency</th><th>tuned, original</th><th>tuned, corrected</th><th>groupfix, corrected</th></tr></thead>
+          <tbody id="tbl-validation"></tbody>
+        </table>
+      </details>
+    </div>
+
+    <div class="callout good">
+      <b>Validated, with real margins.</b> <code class="mono">tuned</code> vs. <code class="mono">default</code>
+      reproduces the original regression almost exactly (+28.0% at c=1 decaying to &minus;4.2% at
+      c=128, vs. the original +27.9%/&minus;4.3%) &mdash; a clean, independent replication of this
+      investigation's founding observation, now on a corrected measurement.
+      <code class="mono">groupfix</code> vs. <code class="mono">default</code> never goes negative
+      <i>anywhere</i> in the sweep, from +28.5% at c=1 down to +2.9% at c=128. And
+      <code class="mono">groupfix</code> vs. plain <code class="mono">tuned</code> grows <i>with</i>
+      concurrency &mdash; roughly tied at low-M where <code class="mono">GROUP_SIZE_M</code> was
+      never touched, up to +7.4% at c=128, exactly the large-M regime the fix targets. This is now
+      a real, independent confirmation of the isolated finding above &mdash; not just a
+      non-contradictory data point sitting on top of it.
+    </div>
+  </section>
+
+  <footer>
+    vLLM Qwen3.8-27B-FP8 kernel-config-tuning investigation &middot; experiments 14&ndash;15 &middot;
+    L40S &times; 2, TP=2 &middot; all figures from matched same-day/same-node captures where noted.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  const NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function fmt(n, d) { return Number(n).toFixed(d === undefined ? 1 : d); }
+
+  function makeTooltip(container) {
+    const tip = document.createElement("div");
+    tip.className = "tooltip";
+    container.appendChild(tip);
+    return tip;
+  }
+
+  // ---------- generic multi-series line chart ----------
+  function lineChart(mount, opts) {
+    const { categories, series, yFormat, yTicks, zeroLine, width, height } = opts;
+    const W = width || 900, H = height || 320;
+    const padL = 44, padR = 18, padT = 16, padB = 32;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    const allVals = series.flatMap(s => s.values);
+    let yMin = Math.min(0, ...allVals), yMax = Math.max(...allVals);
+    if (zeroLine) { yMin = Math.min(yMin, 0); yMax = Math.max(yMax, 0); }
+    const pad = (yMax - yMin) * 0.12 || 1;
+    yMin -= pad; yMax += pad;
+
+    const x = i => padL + (plotW * i) / (categories.length - 1);
+    const y = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+    const wrap = document.createElement("div");
+    wrap.className = "chart-svg-wrap";
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}` });
+
+    // legend
+    if (series.length > 1) {
+      const legend = document.createElement("div");
+      legend.className = "legend";
+      series.forEach(s => {
+        const item = document.createElement("span");
+        item.className = "item";
+        const swSvg = el("svg", { width: 16, height: 8, viewBox: "0 0 16 8" });
+        el("line", {
+          x1: 0, x2: 16, y1: 4, y2: 4, stroke: s.color, "stroke-width": 2,
+          "stroke-linecap": "round", "stroke-dasharray": s.dash || "none"
+        }, swSvg);
+        item.appendChild(swSvg);
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = s.name;
+        item.appendChild(nameSpan);
+        legend.appendChild(item);
+      });
+      mount.appendChild(legend);
+    }
+
+    // y gridlines + ticks
+    const ticks = yTicks || 5;
+    for (let t = 0; t <= ticks; t++) {
+      const v = yMin + ((yMax - yMin) * t) / ticks;
+      const yy = y(v);
+      el("line", { class: "gridline", x1: padL, x2: W - padR, y1: yy, y2: yy }, svg);
+      const label = el("text", { class: "axis-label", x: padL - 8, y: yy + 3, "text-anchor": "end" }, svg);
+      label.textContent = yFormat ? yFormat(v) : fmt(v, 0);
+    }
+    if (zeroLine) {
+      const yy = y(0);
+      el("line", { class: "zeroline", x1: padL, x2: W - padR, y1: yy, y2: yy }, svg);
+    }
+    // baseline (bottom axis)
+    el("line", { class: "baseline", x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH }, svg);
+
+    // x labels
+    categories.forEach((c, i) => {
+      const label = el("text", { class: "axis-label", x: x(i), y: H - 8, "text-anchor": "middle" }, svg);
+      label.textContent = c;
+    });
+
+    // series lines + markers
+    series.forEach(s => {
+      const d = s.values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(v)}`).join(" ");
+      el("path", { class: "series-line", d, stroke: s.color, "stroke-dasharray": s.dash || "none" }, svg);
+      s.values.forEach((v, i) => {
+        el("circle", { class: "series-marker", cx: x(i), cy: y(v), r: s.dash ? 3 : 4, fill: s.color }, svg);
+      });
+      if (s.endLabel !== false) {
+        const last = s.values[s.values.length - 1];
+        const t = el("text", {
+          class: "end-label", x: x(s.values.length - 1) + 8, y: y(last) + 4,
+          fill: s.color
+        }, svg);
+        t.textContent = (s.endLabelText !== undefined ? s.endLabelText : fmt(last, 1));
+      }
+    });
+
+    // crosshair
+    const crosshair = el("line", { class: "crosshair", x1: 0, x2: 0, y1: padT, y2: padT + plotH }, svg);
+
+    wrap.appendChild(svg);
+    mount.appendChild(wrap);
+    const tip = makeTooltip(wrap);
+
+    const hit = el("rect", { class: "hit-col", x: padL, y: padT, width: plotW, height: plotH }, svg);
+    function nearestIndex(mx) {
+      let idx = 0, best = Infinity;
+      categories.forEach((c, i) => {
+        const dx = Math.abs(x(i) - mx);
+        if (dx < best) { best = dx; idx = i; }
+      });
+      return idx;
+    }
+    function showAt(i, clientX, clientY) {
+      crosshair.setAttribute("x1", x(i));
+      crosshair.setAttribute("x2", x(i));
+      crosshair.style.opacity = 1;
+      const rect = wrap.getBoundingClientRect();
+      tip.innerHTML = "";
+      const head = document.createElement("div");
+      head.className = "t-head";
+      head.textContent = opts.tooltipHead ? opts.tooltipHead(categories[i]) : categories[i];
+      tip.appendChild(head);
+      series.forEach(s => {
+        const row = document.createElement("div");
+        row.className = "t-row";
+        const key = document.createElement("span");
+        key.className = "t-key";
+        key.style.background = s.color;
+        const name = document.createElement("span");
+        name.className = "t-name";
+        name.textContent = s.name;
+        const val = document.createElement("span");
+        val.className = "t-val";
+        val.textContent = s.tooltipFormat ? s.tooltipFormat(s.values[i]) : fmt(s.values[i], 1);
+        row.append(key, name, val);
+        tip.appendChild(row);
+      });
+      const px = x(i) / W * rect.width;
+      tip.style.left = px + "px";
+      tip.style.top = (y(Math.max(...series.map(s => s.values[i]))) / H * rect.height - 12) + "px";
+      tip.style.opacity = 1;
+    }
+    function hide() {
+      crosshair.style.opacity = 0;
+      tip.style.opacity = 0;
+    }
+    hit.addEventListener("pointermove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const mx = ((e.clientX - rect.left) / rect.width) * W;
+      showAt(nearestIndex(mx));
+    });
+    hit.addEventListener("pointerleave", hide);
+  }
+
+  // ---------- grouped bar chart (N category groups x M series) ----------
+  function groupedBarChart(mount, opts) {
+    const { categories, series, yFormat, width, height, yTicks } = opts;
+    const W = width || 900, H = height || 300;
+    const padL = 44, padR = 18, padT = 16, padB = 32;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+
+    const allVals = series.flatMap(s => s.values);
+    const yMax = Math.max(...allVals) * 1.18;
+    const yMin = 0;
+    const y = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+    const groupW = plotW / categories.length;
+    const barGap = 3;
+    const barW = Math.min(26, (groupW - barGap * (series.length + 1)) / series.length);
+    const groupInnerW = barW * series.length + barGap * (series.length - 1);
+
+    const legend = document.createElement("div");
+    legend.className = "legend";
+    series.forEach(s => {
+      const item = document.createElement("span");
+      item.className = "item";
+      item.innerHTML = `<span class="swatch-box" style="background:${s.color}"></span>`;
+      const nameSpan = document.createElement("span");
+      nameSpan.textContent = s.name;
+      item.appendChild(nameSpan);
+      legend.appendChild(item);
+    });
+    mount.appendChild(legend);
+
+    const wrap = document.createElement("div");
+    wrap.className = "chart-svg-wrap";
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}` });
+
+    const ticks = yTicks || 4;
+    for (let t = 0; t <= ticks; t++) {
+      const v = yMin + ((yMax - yMin) * t) / ticks;
+      const yy = y(v);
+      el("line", { class: "gridline", x1: padL, x2: W - padR, y1: yy, y2: yy }, svg);
+      const label = el("text", { class: "axis-label", x: padL - 8, y: yy + 3, "text-anchor": "end" }, svg);
+      label.textContent = yFormat ? yFormat(v) : fmt(v, 0);
+    }
+    el("line", { class: "baseline", x1: padL, x2: W - padR, y1: padT + plotH, y2: padT + plotH }, svg);
+
+    const bars = [];
+    categories.forEach((cat, gi) => {
+      const groupX0 = padL + groupW * gi + (groupW - groupInnerW) / 2;
+      const label = el("text", { class: "axis-label", x: padL + groupW * gi + groupW / 2, y: H - 8, "text-anchor": "middle" }, svg);
+      label.textContent = cat;
+      series.forEach((s, si) => {
+        const v = s.values[gi];
+        const bx = groupX0 + si * (barW + barGap);
+        const by = y(v);
+        const bh = padT + plotH - by;
+        const rect = el("rect", {
+          class: "bar-rect", x: bx, y: by, width: barW, height: Math.max(bh, 0),
+          rx: 4, fill: s.color
+        }, svg);
+        bars.push({ rect, cat, name: s.name, color: s.color, value: v });
+        if (s.showLabel) {
+          const vt = el("text", {
+            class: "end-label", x: bx + barW / 2, y: by - 7, "text-anchor": "middle", fill: s.color
+          }, svg);
+          vt.textContent = opts.tooltipFormat ? opts.tooltipFormat(v) : fmt(v, 1);
+        }
+      });
+    });
+
+    wrap.appendChild(svg);
+    mount.appendChild(wrap);
+    const tip = makeTooltip(wrap);
+
+    bars.forEach(b => {
+      b.rect.addEventListener("pointermove", (e) => {
+        const rect = wrap.getBoundingClientRect();
+        const svgRect = svg.getBoundingClientRect();
+        const bx = parseFloat(b.rect.getAttribute("x")) + barW / 2;
+        const by = parseFloat(b.rect.getAttribute("y"));
+        tip.innerHTML = "";
+        const head = document.createElement("div");
+        head.className = "t-head";
+        head.textContent = b.cat;
+        tip.appendChild(head);
+        const row = document.createElement("div");
+        row.className = "t-row";
+        const key = document.createElement("span");
+        key.className = "t-key";
+        key.style.background = b.color;
+        const name = document.createElement("span");
+        name.className = "t-name";
+        name.textContent = b.name;
+        const val = document.createElement("span");
+        val.className = "t-val";
+        val.textContent = (opts.tooltipFormat ? opts.tooltipFormat(b.value) : fmt(b.value, 1));
+        row.append(key, name, val);
+        tip.appendChild(row);
+        tip.style.left = (bx / W * rect.width) + "px";
+        tip.style.top = (by / H * rect.height - 10) + "px";
+        tip.style.opacity = 1;
+        b.rect.style.opacity = 0.82;
+      });
+      b.rect.addEventListener("pointerleave", () => {
+        tip.style.opacity = 0;
+        b.rect.style.opacity = 1;
+      });
+    });
+  }
+
+  // =========================================================
+  // DATA
+  // =========================================================
+  const CONC_LABELS = ["1","2","4","8","16","32","48","64","96","128"];
+
+  const COLOR_DEFAULT = getComputedStyle(document.documentElement).getPropertyValue("--default").trim();
+  const COLOR_TUNED = getComputedStyle(document.documentElement).getPropertyValue("--tuned").trim();
+  const COLOR_GROUPFIX = getComputedStyle(document.documentElement).getPropertyValue("--groupfix").trim();
+
+  // ---- Chart 1: mechanism (exp 14) ----
+  groupedBarChart(document.getElementById("chart-mechanism"), {
+    categories: ["same-B (baseline)", "cold (64 copies)"],
+    yFormat: v => fmt(v, 0) + "%",
+    tooltipFormat: v => fmt(v, 2) + "% DRAM Read",
+    height: 300,
+    series: [
+      { name: "default", color: COLOR_DEFAULT, values: [9.40, 9.34], showLabel: true },
+      { name: "tuned", color: COLOR_TUNED, values: [12.19, 22.87], showLabel: true },
+      { name: "groupfix", color: COLOR_GROUPFIX, values: [10.13, 10.19], showLabel: true }
+    ]
+  });
+
+  // ---- Chart 2: corrected same-day sweep (exp 15, graphs enabled) ----
+  lineChart(document.getElementById("chart-sweep"), {
+    categories: CONC_LABELS,
+    yFormat: v => fmt(v, 0),
+    yTicks: 5,
+    height: 340,
+    tooltipHead: c => "concurrency " + c,
+    series: [
+      { name: "default", color: COLOR_DEFAULT, endLabel: false, tooltipFormat: v => fmt(v, 1) + " tok/s",
+        values: [30.80, 65.58, 126.49, 225.52, 377.23, 570.96, 695.45, 769.69, 873.95, 931.25] },
+      { name: "tuned", color: COLOR_TUNED, endLabel: false, tooltipFormat: v => fmt(v, 1) + " tok/s",
+        values: [39.43, 72.72, 132.60, 238.05, 391.46, 586.16, 696.17, 762.97, 847.13, 892.30] },
+      { name: "groupfix", color: COLOR_GROUPFIX, endLabel: false, tooltipFormat: v => fmt(v, 1) + " tok/s",
+        values: [39.57, 72.65, 135.30, 242.02, 403.64, 609.67, 732.48, 798.35, 905.07, 958.12] }
+    ]
+  });
+
+  // ---- Chart 3: diagnosing the false lead (eager vs graphs TPOT delta, same day) ----
+  lineChart(document.getElementById("chart-drift"), {
+    categories: CONC_LABELS,
+    yFormat: v => (v > 0 ? "+" : "") + fmt(v, 0) + "ms",
+    yTicks: 4,
+    zeroLine: true,
+    height: 240,
+    tooltipHead: c => "concurrency " + c,
+    series: [
+      { name: "TPOT delta (eager − graphs)", color: COLOR_TUNED,
+        tooltipFormat: v => (v > 0 ? "+" : "") + fmt(v, 1) + " ms",
+        endLabelText: "+32ms",
+        values: [67.0, 72.9, 71.7, 71.4, 68.1, 59.7, 57.0, 49.2, 40.2, 31.6] }
+    ]
+  });
+
+  // ---- Chart 4: corrected validation delta vs default ----
+  lineChart(document.getElementById("chart-validation"), {
+    categories: CONC_LABELS,
+    yFormat: v => (v > 0 ? "+" : "") + fmt(v, 0) + "%",
+    yTicks: 6,
+    zeroLine: true,
+    height: 340,
+    tooltipHead: c => "concurrency " + c,
+    series: [
+      { name: "tuned, original", color: COLOR_TUNED, dash: "5 4", endLabel: false, tooltipFormat: v => (v > 0 ? "+" : "") + fmt(v, 1) + "%",
+        values: [27.9, 10.2, 4.9, 5.8, 3.7, 2.5, 0.0, -1.0, -3.1, -4.3] },
+      { name: "tuned, corrected", color: COLOR_TUNED, endLabel: false, tooltipFormat: v => (v > 0 ? "+" : "") + fmt(v, 1) + "%",
+        values: [28.0, 10.9, 4.8, 5.6, 3.8, 2.7, 0.1, -0.9, -3.1, -4.2] },
+      { name: "groupfix, corrected", color: COLOR_GROUPFIX, endLabel: false, tooltipFormat: v => (v > 0 ? "+" : "") + fmt(v, 1) + "%",
+        values: [28.5, 10.8, 7.0, 7.3, 7.0, 6.8, 5.3, 3.7, 3.6, 2.9] }
+    ]
+  });
+
+  // ---- data tables (accessibility fallback) ----
+  function fillTable(id, rows) {
+    const tbody = document.getElementById(id);
+    if (!tbody) return;
+    rows.forEach(r => {
+      const tr = document.createElement("tr");
+      r.forEach(cell => {
+        const td = document.createElement("td");
+        td.textContent = cell;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  fillTable("tbl-sweep", CONC_LABELS.map((c, i) => [
+    c,
+    fmt([30.80,65.58,126.49,225.52,377.23,570.96,695.45,769.69,873.95,931.25][i],1) + " tok/s",
+    fmt([39.43,72.72,132.60,238.05,391.46,586.16,696.17,762.97,847.13,892.30][i],1) + " tok/s",
+    fmt([39.57,72.65,135.30,242.02,403.64,609.67,732.48,798.35,905.07,958.12][i],1) + " tok/s"
+  ]));
+
+  fillTable("tbl-drift", CONC_LABELS.map((c, i) => {
+    const eager = [98.79,102.15,101.43,103.64,105.62,108.65,118.04,123.81,140.36,158.56][i];
+    const graphs = [31.77,29.23,29.77,32.24,37.48,48.95,61.04,74.57,100.20,126.93][i];
+    return [c, fmt(eager,1)+" ms", fmt(graphs,1)+" ms", "+"+fmt(eager-graphs,1)+" ms"];
+  }));
+
+  fillTable("tbl-validation", CONC_LABELS.map((c, i) => {
+    const a = [27.9,10.2,4.9,5.8,3.7,2.5,0.0,-1.0,-3.1,-4.3][i];
+    const b = [28.0,10.9,4.8,5.6,3.8,2.7,0.1,-0.9,-3.1,-4.2][i];
+    const g = [28.5,10.8,7.0,7.3,7.0,6.8,5.3,3.7,3.6,2.9][i];
+    const s = v => (v > 0 ? "+" : "") + fmt(v,1) + "%";
+    return [c, s(a), s(b), s(g)];
+  }));
+
+})();
+</script>

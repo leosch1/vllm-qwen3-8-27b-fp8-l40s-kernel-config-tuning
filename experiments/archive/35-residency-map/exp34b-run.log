@@ -1,0 +1,103 @@
+L2=96.0MiB  N=17408 K=5120 M=1024  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 3}
+B total 85.0MiB -> 16 slices of 5.31MiB
+A total 5.0MiB -> 16 slices of 0.31MiB
+
+=== calibration ===
+  B: after-flush   164.5 GB/s   immediately-again   298.6 GB/s
+  A: after-flush    15.0 GB/s   immediately-again    21.5 GB/s
+
+=== GROUP_SIZE_M=1, tensor B: residency map (5.31MiB slices) ===
+  slice |   GB/s | resident fraction (0=DRAM 165, 1=L2 299)
+      0 |  204.8 |  0.30 ############
+      1 |  215.9 |  0.38 ###############
+      2 |  223.5 |  0.44 #################
+      3 |  203.6 |  0.29 ###########
+      4 |  231.0 |  0.50 ###################
+      5 |  216.8 |  0.39 ###############
+      6 |  218.8 |  0.41 ################
+      7 |  215.2 |  0.38 ###############
+      8 |  225.7 |  0.46 ##################
+      9 |  213.0 |  0.36 ##############
+     10 |  191.7 |  0.20 ########
+     11 |  220.9 |  0.42 ################
+     12 |  224.0 |  0.44 #################
+     13 |  221.6 |  0.43 #################
+     14 |  214.0 |  0.37 ##############
+     15 |  209.9 |  0.34 #############
+  (0s elapsed)
+
+=== GROUP_SIZE_M=1, tensor A: residency map (0.31MiB slices) ===
+  slice |   GB/s | resident fraction (0=DRAM 15, 1=L2 22)
+      0 |   14.5 | -0.08 
+      1 |   14.0 | -0.16 
+      2 |   14.1 | -0.14 
+      3 |   13.6 | -0.22 
+      4 |   13.7 | -0.20 
+      5 |   14.3 | -0.11 
+      6 |   14.3 | -0.12 
+      7 |   13.8 | -0.19 
+      8 |   13.4 | -0.25 
+      9 |   14.0 | -0.16 
+     10 |   14.1 | -0.15 
+     11 |   14.2 | -0.13 
+     12 |   14.1 | -0.15 
+     13 |   13.9 | -0.18 
+     14 |   14.0 | -0.16 
+     15 |   14.1 | -0.14 
+  (0s elapsed)
+
+=== GROUP_SIZE_M=16, tensor B: residency map (5.31MiB slices) ===
+  slice |   GB/s | resident fraction (0=DRAM 165, 1=L2 299)
+      0 |  187.0 |  0.17 ######
+      1 |  185.2 |  0.15 ######
+      2 |  197.4 |  0.25 #########
+      3 |  208.4 |  0.33 #############
+      4 |  229.1 |  0.48 ###################
+      5 |  241.3 |  0.57 ######################
+      6 |  237.7 |  0.55 #####################
+      7 |  239.3 |  0.56 ######################
+      8 |  240.2 |  0.56 ######################
+      9 |  236.9 |  0.54 #####################
+     10 |  257.6 |  0.69 ###########################
+     11 |  238.4 |  0.55 ######################
+     12 |  250.7 |  0.64 #########################
+     13 |  263.4 |  0.74 #############################
+     14 |  257.4 |  0.69 ###########################
+     15 |  232.2 |  0.50 ####################
+  (0s elapsed)
+
+=== GROUP_SIZE_M=16, tensor A: residency map (0.31MiB slices) ===
+  slice |   GB/s | resident fraction (0=DRAM 15, 1=L2 22)
+      0 |   12.7 | -0.36 
+      1 |   14.6 | -0.07 
+      2 |   12.7 | -0.36 
+      3 |   13.6 | -0.22 
+      4 |   14.0 | -0.16 
+      5 |   14.3 | -0.11 
+      6 |   15.0 | -0.01 
+      7 |   13.4 | -0.26 
+      8 |   13.6 | -0.22 
+      9 |   13.5 | -0.24 
+     10 |   14.0 | -0.16 
+     11 |   14.0 | -0.15 
+     12 |   13.8 | -0.19 
+     13 |   13.8 | -0.19 
+     14 |   15.1 |  0.02 
+     15 |   14.1 | -0.14 
+  (1s elapsed)
+
+=== READING THE RESULT ===
+  row-major (GSM=1): expect B roughly UNIFORMLY resident, A largely evicted.
+  grouped  (GSM=16): expect a GRADIENT across B -- late slices resident,
+                     early slices evicted -- and A resident.
+  A flat, fully-evicted B under BOTH would mean neither picture is right.
+
+total 1s
+=== raw ===
+total 104
+drwxr-sr-x. 2 1000900000 1000900000     53 Sep 20 09:36 .
+drwxrwsrwx. 3 root       1000900000     52 Sep 20 09:36 ..
+-rw-r--r--. 1 1000900000 1000900000 101717 Sep 20 09:36 residency_raw.jsonl
+-rw-r--r--. 1 1000900000 1000900000   2154 Sep 20 09:36 summary.json
+642 /repo/exp34b-results/residency_raw.jsonl
+=== done, sleeping so data can be copied out ===

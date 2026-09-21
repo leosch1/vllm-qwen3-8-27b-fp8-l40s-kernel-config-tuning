@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""
+Kernel-level cross-check: do `17`'s 64-copy-cycling-tuned configs and this
+experiment's L2-flush-tuned configs actually perform about the same, at the
+points where the two tuning methods picked different configs?
+
+The two methods often disagree on the *exact* GROUP_SIZE_M (or other
+parameter) picked -- confirmed by diffing their output JSONs directly. That
+alone doesn't tell us whether one method's pick is meaningfully slower than
+the other's, or whether (per 17's own finding that 16/32/64 are close
+competitors) they're within noise of each other. This script benchmarks
+BOTH tuning methods' winning configs against each other, at all 5 shapes x
+18 real anchor M values, using this project's already-established
+cache-cycling fully-randomized isolated-kernel methodology (same design as
+01/19's compare_default_vs_tuned_cycling_fully_randomized.py) -- an
+independent, third measurement, not favoring either tuning method's own
+internal ranking.
+
+Same methodology as that reference script: every launch needed across all
+5 shapes x 18 M-anchors x 2 config-sources x NUM_ITERS iterations is
+generated as one flat list, shuffled into a single random order, and
+executed strictly in that order, with a uniformly random B-copy chosen per
+launch (64 copies/shape) -- bucketed back by (shape, M, source) label only
+after all launches complete.
+"""
+
+import json
+import random
+import statistics
+
+import torch
+
+from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+    _w8a8_triton_block_scaled_mm,
+)
+from vllm.triton_utils import triton
+from vllm.utils.platform_utils import get_device_name_as_file_name
+
+
+def w8a8_block_matmul(A, B, As, Bs, block_size, config, output_dtype=torch.float16):
+    block_n, block_k = block_size[0], block_size[1]
+    M = A.numel() // A.shape[-1]
+    N, K = B.shape
+    C = A.new_empty(A.shape[:-1] + (N,), dtype=output_dtype)
+
+    def grid(META):
+        return (triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),)
+
+    kernel = _w8a8_triton_block_scaled_mm
+    kernel[grid](
+        A, B, C, As, Bs, M, N, K, block_n, block_k,
+        A.stride(-2), A.stride(-1),
+        B.stride(1), B.stride(0),
+        C.stride(-2), C.stride(-1),
+        As.stride(-2), As.stride(-1),
+        Bs.stride(1), Bs.stride(0),
+        **config,
+    )
+    return C
+
+
+def time_one(A, B, As, Bs, block_size, config, out_dtype, start_event, end_event):
+    torch.accelerator.synchronize()
+    start_event.record()
+    w8a8_block_matmul(A, B, As, Bs, block_size, config, out_dtype)
+    end_event.record()
+    end_event.synchronize()
+    return start_event.elapsed_time(end_event)
+
+
+BLOCK_N, BLOCK_K = 128, 128
+OUT_DTYPE = torch.bfloat16
+NUM_ITERS = 2000
+N_WEIGHT_COPIES = 64
+CYC_DIR = "/tmp/cache-aware-tuned-configs-v2"
+FLUSH_DIR = "/tmp/l2-flush-tuned-configs"
+
+SHAPES = {
+    "gate_up_proj": (17408, 5120),
+    "in_proj_qkvz": (8192, 5120),
+    "qkv_proj": (7168, 5120),
+    "down_proj": (5120, 8704),
+    "out_proj": (5120, 3072),
+}
+
+BATCH_SIZES = [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024, 1536, 2048, 3072, 4096]
+
+
+def make_A(M, K, block_k):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    A_fp32 = (torch.rand(M, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    A = A_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    k_tiles = (K + block_k - 1) // block_k
+    As = torch.rand(M, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    return A, As
+
+
+def make_B_copies(N, K, block_n, block_k, count):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    n_tiles = (N + block_n - 1) // block_n
+    k_tiles = (K + block_k - 1) // block_k
+    copies = []
+    for _ in range(count):
+        B_fp32 = (torch.rand(N, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+        B = B_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+        Bs = torch.rand(n_tiles, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+        copies.append((B, Bs))
+    return copies
+
+
+def main():
+    torch.cuda.init()
+    device_name = get_device_name_as_file_name()
+
+    print("=== allocating tensors for all shapes ===")
+    shape_data = {}
+    for shape, (N, K) in SHAPES.items():
+        fname = f"N={N},K={K},device_name={device_name},dtype=fp8_w8a8,block_shape=[{BLOCK_N},{BLOCK_K}].json"
+        with open(f"{CYC_DIR}/{fname}") as f:
+            cyc_cfgs = {int(k): v for k, v in json.load(f).items()}
+        with open(f"{FLUSH_DIR}/{fname}") as f:
+            flush_cfgs = {int(k): v for k, v in json.load(f).items()}
+
+        copies = make_B_copies(N, K, BLOCK_N, BLOCK_K, N_WEIGHT_COPIES)
+        a_by_m = {M: make_A(M, K, BLOCK_K) for M in BATCH_SIZES}
+        shape_data[shape] = {
+            "N": N, "K": K, "copies": copies, "a_by_m": a_by_m,
+            "cyc_cfgs": cyc_cfgs, "flush_cfgs": flush_cfgs,
+        }
+        print(f"  {shape}: N={N}, K={K}, {len(copies)} B-copies, {len(a_by_m)} A tensors allocated")
+    torch.accelerator.synchronize()
+    print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+
+    print("=== warmup: compiling every distinct kernel variant ===")
+    start_event = torch.Event(enable_timing=True)
+    end_event = torch.Event(enable_timing=True)
+    for shape, sd in shape_data.items():
+        for M in BATCH_SIZES:
+            A, As = sd["a_by_m"][M]
+            B, Bs = sd["copies"][0]
+            for cfg in (sd["cyc_cfgs"][M], sd["flush_cfgs"][M]):
+                time_one(A, B, As, Bs, [BLOCK_N, BLOCK_K], cfg, OUT_DTYPE, start_event, end_event)
+    print("warmup done")
+
+    print("=== building and shuffling the full launch sequence ===")
+    work = []
+    for shape in SHAPES:
+        for M in BATCH_SIZES:
+            for source in ("cyc", "flush"):
+                work.extend([(shape, M, source)] * NUM_ITERS)
+    random.shuffle(work)
+    print(f"total launches: {len(work)}")
+
+    print("=== executing fully-randomized sequence ===")
+    results = {}
+    for i, (shape, M, source) in enumerate(work):
+        sd = shape_data[shape]
+        A, As = sd["a_by_m"][M]
+        cfg = sd["cyc_cfgs"][M] if source == "cyc" else sd["flush_cfgs"][M]
+        B, Bs = sd["copies"][random.randrange(N_WEIGHT_COPIES)]
+        lat = time_one(A, B, As, Bs, [BLOCK_N, BLOCK_K], cfg, OUT_DTYPE, start_event, end_event)
+        results.setdefault((shape, M, source), []).append(lat)
+        if (i + 1) % 20000 == 0:
+            print(f"  {i + 1}/{len(work)} launches done")
+
+    print()
+    for shape in SHAPES:
+        print(f"\n### {shape}, cache-cycling, fully-randomized: cyc-tuned vs flush-tuned")
+        print("| M | cyc GROUP_SIZE_M | flush GROUP_SIZE_M | cyc (us) | flush (us) | flush vs cyc |")
+        print("|---:|---:|---:|---:|---:|---:|")
+        for M in BATCH_SIZES:
+            c_lat = results[(shape, M, "cyc")]
+            f_lat = results[(shape, M, "flush")]
+            c_us = statistics.mean(l * 1000.0 / 10 for l in c_lat)
+            f_us = statistics.mean(l * 1000.0 / 10 for l in f_lat)
+            delta = (f_us - c_us) / c_us * 100
+            c_gsm = shape_data[shape]["cyc_cfgs"][M]["GROUP_SIZE_M"]
+            f_gsm = shape_data[shape]["flush_cfgs"][M]["GROUP_SIZE_M"]
+            print(f"| {M} | {c_gsm} | {f_gsm} | {c_us:.2f} | {f_us:.2f} | {delta:+.1f}% |")
+
+
+if __name__ == "__main__":
+    main()

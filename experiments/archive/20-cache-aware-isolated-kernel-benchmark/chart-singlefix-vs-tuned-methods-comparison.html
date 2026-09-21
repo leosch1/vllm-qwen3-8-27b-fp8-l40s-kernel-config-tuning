@@ -1,0 +1,201 @@
+<title>Cross-Run vs. Paired Comparison Methods</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --cross-run:      #e34948;
+  --paired:         #2a78d6;
+  --marker:         #52514e;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --cross-run: #e66767; --paired: #3987e5; --marker: #c3c2b7;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --cross-run: #e66767; --paired: #3987e5; --marker: #c3c2b7;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 700px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.markerline { stroke: var(--marker); stroke-width: 1.25; stroke-dasharray: 4 3; opacity: 0.7; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.marker-text { fill: var(--text-secondary); font-size: 10.5px; font-weight: 600; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 680px; }
+.note b { color: var(--text-secondary); }
+.callout {
+  border-left: 3px solid var(--cross-run); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout b { color: var(--text-primary); }
+</style>
+
+<div class="viz-root">
+  <h1>gate_up_proj: singlefix vs. tuned, two measurement methods compared</h1>
+  <p class="sub">Same question (how does <a href="../23-m2048-singlefix/README.md">22</a>'s singlefix config compare to plain <code>tuned</code>, isolated to <code>gate_up_proj</code>), computed two different ways from data already on hand. <b style="color:var(--cross-run)">Cross-run</b>: dividing each config's already-logged absolute duration vs. its own separately-run <code>default</code> baseline (the same method Part 6 used for cache-aware/groupfix vs. tuned) &mdash; two separate Job runs, chained through two separate <code>default</code> measurements. <b style="color:var(--paired)">Paired</b>: a new same-run benchmark (this experiment's Part 8) that directly pits <code>tuned_config(M)</code> against <code>singlefix_config(M)</code> back-to-back in one script execution, counterbalanced exactly like every other comparison here.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+
+  <div class="callout"><b>The cross-run method is not trustworthy at this resolution.</b> Every point except gate_up_proj's M=2048 (and every point on the other 4 shapes, not shown) is byte-identical between singlefix and tuned &mdash; so the true curve should sit flat on 0% almost everywhere with one bump at M=2048. The <b style="color:var(--cross-run)">cross-run</b> line instead drifts as low as &minus;7.6% (M=256) purely from the two runs' own <code>default</code> baselines not quite agreeing (a ~3-8% run-to-run spread neither run's own "sanity check" caught, since each checked its OWN internal consistency, not agreement with a run it hadn't been benchmarked alongside). The <b style="color:var(--paired)">paired</b> line, measured in one script execution with the same counter-balanced design as every other chart in this project, sits within &plusmn;3pp of zero everywhere except M=2048's clean +2.0% &mdash; the real signal, isolated from cross-run noise entirely.</div>
+</div>
+
+<script>
+const DATA = {
+  "cross_run": [[1,0.6],[2,1.7],[3,1.5],[4,-1.1],[6,1.2],[8,1.6],[12,1.5],[16,5.1],[20,0.3],[24,-0.1],[28,-2.4],[32,-4.3],[40,-3.1],[48,-6.4],[56,-6.0],[64,-4.0],[80,-5.3],[96,-2.3],[112,-5.2],[128,-0.1],[160,-4.6],[200,-4.3],[256,-7.6],[384,-3.5],[512,-3.1],[768,-3.0],[1024,-2.1],[1280,-1.5],[1536,-2.5],[1792,-2.9],[2048,0.5],[2560,-3.1],[3072,-4.8],[3584,-5.1],[4096,-2.5]],
+  "paired": [[1,4.4],[2,-0.0],[3,-0.3],[4,-3.0],[6,-1.8],[8,-1.5],[12,0.6],[16,4.3],[20,2.1],[24,1.5],[28,-2.3],[32,2.2],[40,-0.1],[48,-1.0],[56,-0.2],[64,0.7],[80,1.5],[96,-2.7],[112,2.9],[128,0.1],[160,-0.7],[200,-0.5],[256,0.6],[384,-0.3],[512,-0.2],[768,0.5],[1024,-0.5],[1280,-1.6],[1536,-1.6],[1792,0.1],[2048,2.0],[2560,0.8],[3072,-1.0],[3584,-1.4],[4096,-1.0]]
+};
+
+const SERIES = [
+  ["cross_run", "var(--cross-run)", "cross-run (chained through 2 separate default runs)"],
+  ["paired", "var(--paired)", "paired (same-run, counterbalanced)"],
+];
+
+const legend = document.getElementById('legend');
+SERIES.forEach(([key, color, label]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${label}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 380, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["cross_run"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+// vertical marker at M=2048 -- the one anchor singlefix actually changes
+const markerX = xPos(2048);
+const markerLine = document.createElementNS(svgNS, 'line');
+markerLine.setAttribute('class', 'markerline');
+markerLine.setAttribute('x1', markerX); markerLine.setAttribute('x2', markerX);
+markerLine.setAttribute('y1', PAD_T); markerLine.setAttribute('y2', PAD_T + plotH);
+svg.appendChild(markerLine);
+const markerLabel = document.createElementNS(svgNS, 'text');
+markerLabel.setAttribute('class', 'marker-text');
+markerLabel.setAttribute('x', markerX); markerLabel.setAttribute('y', PAD_T - 4);
+markerLabel.setAttribute('text-anchor', 'middle');
+markerLabel.textContent = 'M=2048 (the changed anchor)';
+svg.appendChild(markerLabel);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SERIES.forEach(([key, color, label]) => {
+  const data = DATA[key];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', m === 2048 ? 4.5 : 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${label}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">singlefix vs. tuned</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

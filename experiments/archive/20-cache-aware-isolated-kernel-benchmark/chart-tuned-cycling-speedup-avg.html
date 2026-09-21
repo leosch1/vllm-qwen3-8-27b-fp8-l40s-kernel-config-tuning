@@ -1,0 +1,246 @@
+<title>Tuned Cycling Speedup, Averaged</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+  --traffic:        #4a7fd9;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767; --traffic: #6b9fe8;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767; --traffic: #6b9fe8;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+.panel-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 26px 0 8px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, original tuned config vs. default, under cache-cycling pressure &mdash; averaged across shapes</h1>
+  <p class="sub">Same data as <a href="./chart-tuned-cycling-speedup.html">the 5-shape version</a> (same 175-point grid, same cache-cycling methodology, plain unpatched original tuned config), collapsed to a single line: the unweighted mean speedup across all 5 shapes at each M, instead of 5 separate per-shape lines.</p>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Averaging smooths out the shape-to-shape noise that dominates the 5-line version at small M (single points there swing as wide as -20.5% to +26.5%) and makes the underlying trend easy to read directly: mean speedup dips slightly negative only briefly around M=160 (-3.8%), and otherwise sits solidly positive across the whole grid, rising from roughly +7-9% in the low-to-mid M range to +10-11% at the largest M anchors (3072-4096). No single-shape point should be read off this line, though &mdash; averaging can hide a real per-shape effect (like gate_up_proj's own large-M behavior) inside a mean dominated by the other 4 shapes.</p>
+
+  <div class="panel-title">Real serving traffic (c=64, 500 requests)</div>
+  <div class="chart-wrap" id="chart-wrap-c64"></div>
+  <p class="note">Real GEMM kernel launch counts by M under actual serving traffic (from <a href="../24-cudagraph-dispatch-histogram/README.md">experiment 23</a>'s direct <code>CudagraphDispatcher.dispatch()</code> instrumentation), eager and graph-replayed launches combined into one total per M, plotted on the same log2 M axis as the speedup line above so the two can be read together directly. Traffic is completely dominated by <b>M=64 &mdash; the concurrency target itself</b> &mdash; at 209,920 launches, roughly 7&times; the next-largest bucket (M=52, 30,208). Everything else across the grid, including every M the speedup line above actually characterizes at any density, is a rounding error by comparison.</p>
+</div>
+
+<script>
+// Unweighted mean, per M, across the 5 shapes in the original chart's data.
+const DATA = [[1,21.02],[2,9.18],[3,11.52],[4,8.82],[6,9.0],[8,7.38],[12,8.5],[16,8.36],[20,8.96],[24,9.28],[28,9.58],[32,9.72],[40,6.42],[48,7.5],[56,7.84],[64,7.82],[80,2.88],[96,6.08],[112,5.74],[128,6.26],[160,-3.8],[200,7.22],[256,8.34],[384,6.46],[512,5.74],[768,1.98],[1024,7.1],[1280,6.2],[1536,7.54],[1792,8.7],[2048,6.54],[2560,10.1],[3072,10.8],[3584,11.28],[4096,10.28]];
+const LINE_COLOR = "var(--gate-up-proj)";
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA.map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = DATA.map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+(() => {
+  let d = '';
+  DATA.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', LINE_COLOR);
+  path.setAttribute('stroke-width', 2.5);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  DATA.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 3.5);
+    circ.setAttribute('fill', LINE_COLOR);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">mean speedup</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+})();
+
+document.getElementById('chart-wrap').appendChild(svg);
+
+// --- Second panel: real c=64 serving traffic, eager + replayed combined,
+// same log2 M axis (xPos/PAD_L/PAD_R/W/plotW reused from above) so the two
+// panels line up. Data from 24-cudagraph-dispatch-histogram's exact
+// dispatch-call instrumentation (eager + replayed launch counts summed
+// per M; no distinction drawn between the two here).
+(() => {
+  const EAGER = [[312,1792],[360,256],[562,256],[575,256],[829,256],[1003,256],[1217,256],[1431,256],[1833,1536],[1834,1536],[1835,4096],[2009,256],[2017,256],[2048,8448]];
+  const REPLAYED = [[1,256],[2,256],[9,256],[16,256],[23,256],[30,256],[37,256],[44,256],[49,256],[50,1536],[51,512],[52,30208],[63,3584],[64,209920],[256,256]];
+  const byM = new Map();
+  [...EAGER, ...REPLAYED].forEach(([m,v]) => byM.set(m, (byM.get(m)||0) + v));
+  const TRAFFIC = [...byM.entries()].sort((a,b) => a[0]-b[0]);
+
+  const svg2 = document.createElementNS(svgNS, 'svg');
+  svg2.setAttribute('class', 'chart');
+  svg2.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const yMinLog = 2; // floor at 100
+  const yMaxLog = Math.ceil(Math.log10(Math.max(...TRAFFIC.map(p=>p[1]))));
+  function yPos2(v) { return PAD_T + plotH - (Math.log10(Math.max(v,1)) - yMinLog) / (yMaxLog - yMinLog) * plotH; }
+
+  for (let p = yMinLog; p <= yMaxLog; p++) {
+    const v = Math.pow(10, p);
+    const y = yPos2(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg2.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toLocaleString();
+    svg2.appendChild(t);
+  }
+  [1,4,16,64,256,1024,4096].forEach(c => {
+    const x = xPos(c);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 10);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = c;
+    svg2.appendChild(t);
+  });
+  const xlab2 = document.createElementNS(svgNS, 'text');
+  xlab2.setAttribute('class', 'axis-text');
+  xlab2.setAttribute('x', PAD_L + plotW/2); xlab2.setAttribute('y', H);
+  xlab2.setAttribute('text-anchor', 'middle');
+  xlab2.textContent = 'M (batch size)';
+  svg2.appendChild(xlab2);
+
+  const barW = 3;
+  TRAFFIC.forEach(([m, v]) => {
+    const x = xPos(m), y = yPos2(v);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x - barW/2); rect.setAttribute('y', y);
+    rect.setAttribute('width', barW); rect.setAttribute('height', PAD_T + plotH - y);
+    rect.setAttribute('rx', 1);
+    rect.setAttribute('fill', 'var(--traffic)');
+    rect.setAttribute('opacity', '0.85');
+    rect.style.cursor = 'pointer';
+    rect.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">launches</span><b>${v.toLocaleString()}</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    rect.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    rect.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg2.appendChild(rect);
+  });
+
+  document.getElementById('chart-wrap-c64').appendChild(svg2);
+})();
+</script>

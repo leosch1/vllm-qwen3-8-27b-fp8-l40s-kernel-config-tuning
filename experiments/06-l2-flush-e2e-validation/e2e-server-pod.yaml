@@ -1,0 +1,89 @@
+# A minimal standalone vLLM server for the end-to-end concurrency sweep
+# (results/e2e-comparison.json's l2_flush series, results/full-metrics-
+# table.json). Deploy once as-is for the DEFAULT run (vLLM's hardcoded
+# fallback config, no mounts below active); then uncomment the tuned-
+# configs volumeMounts/volumes block, re-apply, and run the sweep again
+# for the L2-FLUSH run (this repo's committed tuned-configs/, the output
+# of ../04-l2-flush-retune/). Everything else about the deployment stays
+# identical between the two runs, which is what makes the comparison valid.
+#
+# vLLM has no env var or CLI flag for "use this tuned config directory" --
+# it looks for a JSON file at a fixed path inside its own installed package
+# (vllm/model_executor/layers/quantization/utils/configs/<shape-key>.json),
+# so "using the tuned config" means overlaying that exact path, one file
+# per weight-matrix shape.
+#
+# Usage:
+#   kubectl create configmap qwen3-8-27b-fp8-l2flush-tuned-configs --from-file=../../tuned-configs/
+#   kubectl apply -f e2e-server-pod.yaml
+#   kubectl wait --for=condition=Ready pod/qwen3-8-27b-fp8-l2flush-e2e-server --timeout=10m
+#   kubectl cp sweep.sh qwen3-8-27b-fp8-l2flush-e2e-server:/tmp/sweep.sh
+#   kubectl exec -it qwen3-8-27b-fp8-l2flush-e2e-server -- bash /tmp/sweep.sh > sweep-default.log
+#   # then: uncomment the tuned-configs mounts below, `kubectl apply` again, repeat:
+#   kubectl exec -it qwen3-8-27b-fp8-l2flush-e2e-server -- bash /tmp/sweep.sh > sweep-l2flush.log
+#   kubectl delete -f e2e-server-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: qwen3-8-27b-fp8-l2flush-e2e-server
+spec:
+  restartPolicy: Never
+  tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Equal
+      value: present
+  containers:
+    - name: vllm-server
+      image: docker.io/vllm/vllm-openai:v0.27.1
+      env:
+        - name: HOME
+          value: /tmp
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+      command:
+        - /bin/bash
+        - -c
+      args:
+        - |
+          set -euo pipefail
+          # Model weights: this repo doesn't ship them -- point this at your
+          # own local HF cache path or PVC mount, or set MODEL_PATH to a
+          # repo id and let vLLM download it.
+          python3 -m vllm.entrypoints.openai.api_server \
+            --port=8080 --model="${MODEL_PATH:-/mnt/models}" --served-model-name=qwen-27b \
+            --tensor-parallel-size=2 --max-model-len=8192 \
+            --max-num-seqs=128
+      volumeMounts: []
+      # Uncomment for the TUNED run (5 files, one per weight-matrix shape):
+      # volumeMounts:
+      #   - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #     name: tuned-configs
+      #     subPath: N=17408,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #   - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #     name: tuned-configs
+      #     subPath: N=8192,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #   - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #     name: tuned-configs
+      #     subPath: N=7168,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #   - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #     name: tuned-configs
+      #     subPath: N=5120,K=8704,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #   - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      #     name: tuned-configs
+      #     subPath: N=5120,K=3072,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      resources:
+        requests:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "16"
+          memory: 96Gi
+          nvidia.com/gpu: "2"
+  volumes: []
+  # Uncomment together with the volumeMounts above, for the TUNED run:
+  # volumes:
+  #   - name: tuned-configs
+  #     configMap:
+  #       name: qwen3-8-27b-fp8-l2flush-tuned-configs

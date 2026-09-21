@@ -1,0 +1,17 @@
+=== writing singlefix + tuned gate_up_proj config files ===
+=== writing within-block noise check script ===
+=== running within-block noise check ===
+tuned_config[2048] = {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+singlefix_config[2048] = {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 16, 'num_warps': 8, 'num_stages': 3}
+
+### gate_up_proj (N=17408, K=5120), M=2048, 5 repeats, within-block stats
+| repeat | tuned_mean | tuned_SEM | singlefix_mean | singlefix_SEM | speedup | within-block 95% CI |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 120.587 | 0.0913 | 117.964 | 0.1009 | +2.18% | [+1.96%, +2.39%] |
+| 2 | 122.933 | 0.1002 | 119.827 | 0.0614 | +2.53% | [+2.34%, +2.71%] |
+| 3 | 123.305 | 0.1006 | 121.491 | 0.0614 | +1.47% | [+1.29%, +1.66%] |
+| 4 | 124.069 | 0.0974 | 122.294 | 0.0601 | +1.43% | [+1.25%, +1.61%] |
+| 5 | 124.731 | 0.0999 | 121.588 | 0.0736 | +2.52% | [+2.33%, +2.71%] |
+
+observed speedup values across 5 repeats: [2.18, 2.53, 1.47, 1.43, 2.52]
+mean: +2.02%, stdev across repeats: 0.54pp

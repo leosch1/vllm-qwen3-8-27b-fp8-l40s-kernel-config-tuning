@@ -1,0 +1,269 @@
+<title>Contention Results</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 900px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 720px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 26px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 10px; font-size: 12.5px; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+table.data { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 10px; }
+table.data th, table.data td { border-bottom: 1px solid var(--border); padding: 4px 7px; text-align: right; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--text-secondary); font-weight: 600; }
+.neg { color: var(--s2); font-weight: 600; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 18px; }
+</style>
+
+<div class="viz-root">
+  <h1>Kernel comparison under simulated GPU contention</h1>
+  <p class="sub">compare_under_contention.py: same default-vs-tuned comparison, run while a separate process continuously saturates the GPU with unrelated 4096³ matmuls. 500 iterations/point, isolated baseline from the same iteration count for a fair comparison.</p>
+
+  <div class="panel-title">Does batch-mix × kernel data predict the actual TPOT?</div>
+  <div class="panel-sub">Corrected version: the first pass at this chart summed one call of each of the 5 shapes per engine step, but the raw per-call histogram (_M_COUNTS) shows the real per-step call counts are 64/48/16/64/64 &mdash; matching the served model's actual architecture (64 total layers, 48 linear-attention + 16 full-attention, confirmed against /mnt/models/config.json) &mdash; 256 dense-GEMM calls per decode step, not 5. Re-weighted by those multipliers, GEMM goes from ~0.1% of TPOT to a real ~10-20%, and predicted tuned TPOT = actual default TPOT − (predicted default GEMM time − predicted tuned GEMM time) now moves in a comparable range to the actual gap (mean absolute error 2.8ms isolated, 2.6ms contention, vs. actual tuned). It still undershoots the C=1 gap specifically (predicted ~0.3ms drop vs. an actual ~7ms drop) &mdash; direct per-call compute savings alone don't explain the very-low-concurrency case, so something beyond raw GEMM time is still at play there.</div>
+  <div class="legend" id="legend-predict"></div>
+  <div class="chart-wrap" id="chart-predict"></div>
+
+  <div class="panel-title">Prediction error: actual tuned TPOT − predicted tuned TPOT</div>
+  <div class="panel-sub">How far off each prediction is from what actually happened, in ms. Zero = perfect prediction. Negative = the model predicted tuned would be slower than it actually was (under-predicted the win, at low concurrency); positive = the model predicted tuned would be faster than it actually was (missed the loss, at high concurrency). The error crosses zero and grows in the same direction at both ends &mdash; the model is systematically too optimistic about tuned at high concurrency and too pessimistic at low concurrency, for both the isolated and contention versions.</div>
+  <div class="legend" id="legend-predict-delta"></div>
+  <div class="chart-wrap" id="chart-predict-delta"></div>
+
+  <div class="panel-title">All 5 shapes — mean speedup, isolated vs. contention</div>
+  <div class="panel-sub">Overview before the per-shape breakdown below.</div>
+  <div class="legend" id="legend-mean"></div>
+  <div class="chart-wrap" id="chart-mean"></div>
+
+  <div id="per-shape"></div>
+</div>
+
+<script>
+const DATA = {"N=17408,K=5120": [[1, 19.06, 5.12, 73.1, 20.62, 17.57, 14.8], [2, 12.73, 5.36, 57.9, 19.12, 18.34, 4.1], [4, 10.42, 5.17, 50.3, 18.75, 17.95, 4.2], [8, 8.88, 5.17, 41.8, 19.14, 18.37, 4.0], [16, 8.09, 5.45, 32.7, 18.79, 17.96, 4.4], [24, 8.37, 6.28, 24.9, 19.15, 18.09, 5.5], [32, 8.21, 5.87, 28.5, 18.73, 18.12, 3.3], [48, 7.91, 6.97, 11.8, 18.97, 18.47, 2.6], [64, 8.3, 6.92, 16.7, 18.85, 18.47, 2.0], [96, 10.14, 9.13, 10.0, 19.65, 19.1, 2.8], [128, 10.43, 8.8, 15.6, 19.58, 19.03, 2.8], [256, 17.95, 15.67, 12.7, 22.64, 20.24, 10.6], [512, 34.07, 29.06, 14.7, 35.74, 47.21, -32.1], [1024, 65.43, 58.58, 10.5, 61.81, 73.44, -18.8], [1536, 97.87, 87.55, 10.6, 90.44, 99.47, -10.0], [2048, 130.78, 113.85, 12.9, 120.86, 126.45, -4.6], [3072, 198.82, 174.5, 12.2, 184.51, 182.16, 1.3], [4096, 263.74, 238.27, 9.7, 485.54, 494.53, -1.9]], "N=8192,K=5120": [[1, 12.48, 4.51, 63.8, 10.99, 8.45, 23.1], [2, 8.96, 4.45, 50.3, 9.81, 8.16, 16.9], [4, 7.76, 4.37, 43.6, 9.28, 8.29, 10.6], [8, 7.69, 4.74, 38.4, 9.88, 8.45, 14.5], [16, 7.52, 4.55, 39.6, 9.33, 8.3, 11.0], [24, 7.62, 4.93, 35.2, 9.87, 8.21, 16.8], [32, 7.39, 4.75, 35.7, 9.31, 8.23, 11.6], [48, 7.31, 5.44, 25.6, 10.01, 8.43, 15.8], [64, 7.54, 6.38, 15.4, 9.42, 8.49, 9.9], [96, 7.54, 6.51, 13.7, 9.6, 9.02, 6.1], [128, 7.73, 6.58, 14.9, 10.07, 9.03, 10.4], [256, 9.78, 8.54, 12.7, 10.44, 9.45, 9.5], [512, 16.2, 14.32, 11.6, 17.59, 16.93, 3.7], [1024, 29.52, 27.08, 8.3, 31.98, 29.4, 8.1], [1536, 42.0, 38.45, 8.4, 46.07, 42.79, 7.1], [2048, 54.91, 50.24, 8.5, 60.43, 57.04, 5.6], [3072, 89.02, 78.28, 12.1, 87.61, 79.71, 9.0], [4096, 123.42, 105.18, 14.8, 117.93, 107.41, 8.9]], "N=7168,K=5120": [[1, 11.25, 4.36, 61.3, 10.33, 7.6, 26.5], [2, 8.43, 4.24, 49.6, 8.9, 7.33, 17.6], [4, 7.65, 4.2, 45.1, 9.41, 7.36, 21.8], [8, 7.58, 4.35, 42.6, 8.89, 7.51, 15.5], [16, 7.43, 4.62, 37.8, 9.53, 7.3, 23.4], [24, 7.29, 4.88, 33.0, 8.92, 7.49, 16.0], [32, 7.29, 4.81, 34.0, 9.44, 7.51, 20.4], [48, 7.61, 5.26, 30.9, 8.95, 7.75, 13.3], [64, 7.8, 5.26, 32.5, 9.55, 7.61, 20.2], [96, 7.5, 6.6, 12.0, 8.92, 7.94, 11.1], [128, 7.57, 7.27, 4.0, 9.67, 8.34, 13.8], [256, 9.0, 8.37, 7.0, 9.93, 8.53, 14.1], [512, 15.44, 14.39, 6.8, 17.03, 16.55, 2.8], [1024, 27.79, 26.19, 5.8, 31.27, 29.51, 5.6], [1536, 36.54, 32.8, 10.2, 40.42, 36.65, 9.3], [2048, 48.61, 44.44, 8.6, 53.92, 50.18, 6.9], [3072, 76.18, 67.94, 10.8, 77.67, 71.75, 7.6], [4096, 105.94, 92.66, 12.5, 103.64, 93.73, 9.6]], "N=5120,K=8704": [[1, 14.44, 4.99, 65.4, 13.23, 8.83, 33.3], [2, 10.7, 4.79, 55.2, 11.91, 8.83, 25.8], [4, 10.75, 5.36, 50.1, 11.69, 8.63, 26.2], [8, 10.32, 4.78, 53.6, 11.77, 8.7, 26.1], [16, 10.19, 4.92, 51.7, 11.75, 8.89, 24.3], [24, 10.13, 5.58, 44.9, 11.77, 8.86, 24.7], [32, 10.56, 5.44, 48.5, 11.78, 8.7, 26.2], [48, 10.36, 6.46, 37.6, 11.77, 9.07, 23.0], [64, 10.2, 6.17, 39.5, 11.85, 9.16, 22.7], [96, 10.91, 6.92, 36.6, 12.12, 9.4, 22.5], [128, 10.51, 8.42, 19.8, 12.11, 9.79, 19.2], [256, 12.29, 11.38, 7.5, 14.3, 12.24, 14.4], [512, 22.53, 20.6, 8.5, 26.01, 22.75, 12.5], [1024, 34.63, 31.96, 7.7, 38.65, 35.8, 7.4], [1536, 46.41, 42.87, 7.6, 51.56, 46.97, 8.9], [2048, 60.02, 52.98, 11.7, 65.42, 59.4, 9.2], [3072, 91.92, 81.12, 11.8, 94.19, 83.46, 11.4], [4096, 129.35, 115.56, 10.7, 126.18, 117.23, 7.1]], "N=5120,K=3072": [[1, 7.9, 3.92, 50.4, 5.62, 3.78, 32.7], [2, 6.42, 3.74, 41.8, 5.03, 3.79, 24.7], [4, 6.04, 3.84, 36.5, 4.89, 3.79, 22.5], [8, 5.64, 3.85, 31.7, 4.91, 3.77, 23.3], [16, 5.58, 3.79, 32.1, 4.89, 3.76, 23.1], [24, 5.62, 3.94, 29.8, 4.94, 3.8, 22.9], [32, 5.57, 3.94, 29.3, 4.88, 3.79, 22.5], [48, 5.56, 4.2, 24.5, 4.95, 3.94, 20.5], [64, 5.56, 4.21, 24.4, 4.94, 4.03, 18.5], [96, 5.74, 4.63, 19.4, 5.22, 4.15, 20.4], [128, 5.75, 5.05, 12.2, 5.19, 4.26, 17.9], [256, 6.7, 6.47, 3.4, 5.78, 4.96, 14.1], [512, 9.85, 8.54, 13.2, 9.26, 8.16, 11.9], [1024, 14.2, 13.25, 6.7, 14.76, 13.08, 11.4], [1536, 18.6, 17.52, 5.8, 19.48, 18.36, 5.8], [2048, 23.0, 21.45, 6.7, 24.03, 22.49, 6.4], [3072, 32.1, 29.6, 7.8, 33.58, 31.1, 7.4], [4096, 44.39, 40.36, 9.1, 44.2, 42.52, 3.8]]};  // {shape: [[M, def_iso, tuned_iso, spd_iso, def_cont, tuned_cont, spd_cont], ...]}
+const FLAG_SHAPE = "N=17408,K=5120";
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+function makeChart(containerId, W, H, xVals, series, yFmt, zeroLine) {
+  const PAD_L = 50, PAD_R = 16, PAD_T = 12, PAD_B = 26;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const xMin = Math.log2(Math.min(...xVals)), xMax = Math.log2(Math.max(...xVals));
+  const xPos = m => PAD_L + (Math.log2(m) - xMin) / (xMax - xMin) * plotW;
+
+  const allV = series.flatMap(s => s.vals);
+  let yMax = Math.max(...allV), yMin = Math.min(...allV);
+  const pad = (yMax - yMin) * 0.1 || Math.abs(yMax) * 0.1 || 1;
+  yMax += pad; yMin -= pad;
+  if (zeroLine && yMin > 0) yMin = -pad;
+  const yPos = v => PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH;
+
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const ySteps = 4;
+  for (let i = 0; i <= ySteps; i++) {
+    const v = yMin + (yMax - yMin) * i / ySteps;
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text'); t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end'); t.textContent = yFmt(v);
+    svg.appendChild(t);
+  }
+  if (zeroLine) {
+    const y0 = yPos(0);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'zeroline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y0); gl.setAttribute('y2', y0);
+    svg.appendChild(gl);
+  }
+  xVals.forEach(m => {
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text'); t.setAttribute('x', xPos(m)); t.setAttribute('y', H - 6);
+    t.setAttribute('text-anchor', 'middle'); t.textContent = m;
+    svg.appendChild(t);
+  });
+
+  series.forEach(s => {
+    let d = '';
+    xVals.forEach((m, i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(s.vals[i]) + ' '; });
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('d', d.trim()); path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', s.color); path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap','round'); path.setAttribute('stroke-linejoin','round');
+    svg.appendChild(path);
+    xVals.forEach((m, i) => {
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('cx', xPos(m)); c.setAttribute('cy', yPos(s.vals[i]));
+      c.setAttribute('r', 3.5); c.setAttribute('fill', s.color);
+      c.style.cursor = 'pointer';
+      c.addEventListener('mouseenter', (e) => {
+        tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k" style="color:${s.color}">${s.label}</span><b>${yFmt(s.vals[i])}</b></div>`;
+        tooltip.style.opacity = 1;
+      });
+      c.addEventListener('mousemove', (e) => {
+        tooltip.style.left = (e.clientX + 14) + 'px';
+        tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+      });
+      c.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+      svg.appendChild(c);
+    });
+  });
+
+  document.getElementById(containerId).appendChild(svg);
+}
+
+function legend(id, items) {
+  const el = document.getElementById(id);
+  items.forEach(([label, color]) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `<span class="swatch" style="background:${color}"></span>${label}`;
+    el.appendChild(item);
+  });
+}
+
+// Predicted tuned TPOT (isolated- and contention-based) vs actual default/tuned TPOT, absolute ms
+{
+  const ABS = {"1": {"actual_default": 31.75, "actual_tuned": 24.6, "pred_tuned_iso": 31.46152, "pred_tuned_cont": 31.34216}, "2": {"actual_default": 29.19, "actual_tuned": 26.45, "pred_tuned_iso": 28.90152, "pred_tuned_cont": 28.78216}, "4": {"actual_default": 29.77, "actual_tuned": 27.6, "pred_tuned_iso": 29.21936, "pred_tuned_cont": 29.71728}, "8": {"actual_default": 32.17, "actual_tuned": 29.95, "pred_tuned_iso": 31.324693, "pred_tuned_cont": 31.782313}, "16": {"actual_default": 37.31, "actual_tuned": 35.28, "pred_tuned_iso": 35.991078, "pred_tuned_cont": 36.935253}, "32": {"actual_default": 48.89, "actual_tuned": 46.82, "pred_tuned_iso": 47.239733, "pred_tuned_cont": 48.424922}, "48": {"actual_default": 60.85, "actual_tuned": 59.96, "pred_tuned_iso": 59.209998, "pred_tuned_cont": 60.541608}, "64": {"actual_default": 74.32, "actual_tuned": 74.29, "pred_tuned_iso": 72.477954, "pred_tuned_cont": 73.845618}, "96": {"actual_default": 99.96, "actual_tuned": 102.35, "pred_tuned_iso": 97.48167, "pred_tuned_cont": 98.987288}, "128": {"actual_default": 126.5, "actual_tuned": 131.4, "pred_tuned_iso": 124.683191, "pred_tuned_cont": 126.208464}};  // {C: {actual_default, actual_tuned, pred_tuned_iso, pred_tuned_cont}} -- pred_tuned = actual_default - (GEMM_default_us - GEMM_tuned_us)/1000, GEMM weighted by real per-step call multiplicities 64/48/16/64/64
+  const cVals = Object.keys(ABS).map(Number).sort((a,b)=>a-b);
+  makeChart('chart-predict', 820, 280, cVals, [
+    { label: 'actual default', color: 'var(--text-muted)', vals: cVals.map(c => ABS[c].actual_default) },
+    { label: 'actual tuned', color: 'var(--s2)', vals: cVals.map(c => ABS[c].actual_tuned) },
+    { label: 'predicted tuned (isolated)', color: 'var(--s1)', vals: cVals.map(c => ABS[c].pred_tuned_iso) },
+    { label: 'predicted tuned (contention)', color: 'var(--s3)', vals: cVals.map(c => ABS[c].pred_tuned_cont) },
+  ], v => v.toFixed(0) + ' ms', false);
+  legend('legend-predict', [
+    ['actual default TPOT', 'var(--text-muted)'],
+    ['actual tuned TPOT', 'var(--s2)'],
+    ['predicted tuned TPOT (from isolated kernel data)', 'var(--s1)'],
+    ['predicted tuned TPOT (from contention kernel data)', 'var(--s3)'],
+  ]);
+
+  // Prediction error: actual tuned TPOT minus each predicted-tuned TPOT
+  makeChart('chart-predict-delta', 820, 260, cVals, [
+    { label: 'error (isolated)', color: 'var(--s1)', vals: cVals.map(c => ABS[c].actual_tuned - ABS[c].pred_tuned_iso) },
+    { label: 'error (contention)', color: 'var(--s3)', vals: cVals.map(c => ABS[c].actual_tuned - ABS[c].pred_tuned_cont) },
+  ], v => v.toFixed(1) + ' ms', true);
+  legend('legend-predict-delta', [
+    ['actual tuned − predicted tuned (isolated)', 'var(--s1)'],
+    ['actual tuned − predicted tuned (contention)', 'var(--s3)'],
+  ]);
+}
+
+// Overview: mean speedup across shapes, isolated vs contention
+{
+  const shapes = Object.keys(DATA);
+  const xVals = DATA[shapes[0]].map(r => r[0]);
+  const meanIso = xVals.map((m, i) => shapes.reduce((a,s) => a + DATA[s][i][3], 0) / shapes.length);
+  const meanCont = xVals.map((m, i) => shapes.reduce((a,s) => a + DATA[s][i][6], 0) / shapes.length);
+  makeChart('chart-mean', 820, 260, xVals, [
+    { label: 'isolated', color: 'var(--s1)', vals: meanIso },
+    { label: 'under contention', color: 'var(--s2)', vals: meanCont },
+  ], v => v.toFixed(0) + '%', true);
+  legend('legend-mean', [['mean isolated speedup', 'var(--s1)'], ['mean speedup under contention', 'var(--s2)']]);
+}
+
+// Per-shape: speedup chart + absolute-tax chart + data table, for every shape
+const perShapeEl = document.getElementById('per-shape');
+Object.keys(DATA).forEach((shape, idx) => {
+  const rows = DATA[shape];
+  const xVals = rows.map(r => r[0]);
+  const negCount = rows.filter(r => r[6] < 0).length;
+
+  const block = document.createElement('div');
+  block.innerHTML = `
+    <div class="panel-title" style="margin-top:38px;">${shape} — speedup %, isolated vs. under contention</div>
+    <div class="panel-sub">${negCount > 0 ? negCount + ' of 18 points go negative under contention.' : 'Stays positive at every point under contention.'}</div>
+    <div class="legend" id="legend-speedup-${idx}"></div>
+    <div class="chart-wrap" id="chart-speedup-${idx}"></div>
+
+    <div class="panel-title">Same shape — absolute contention tax by config (Δ µs, contention − isolated)</div>
+    <div class="legend" id="legend-tax-${idx}"></div>
+    <div class="chart-wrap" id="chart-tax-${idx}"></div>
+
+    <details>
+      <summary>Show raw data (${shape})</summary>
+      <table class="data" id="data-table-${idx}"></table>
+    </details>
+  `;
+  perShapeEl.appendChild(block);
+
+  makeChart(`chart-speedup-${idx}`, 820, 260, xVals, [
+    { label: 'isolated', color: 'var(--s1)', vals: rows.map(r => r[3]) },
+    { label: 'under contention', color: 'var(--s2)', vals: rows.map(r => r[6]) },
+  ], v => v.toFixed(0) + '%', true);
+  legend(`legend-speedup-${idx}`, [['isolated speedup', 'var(--s1)'], ['speedup under contention', 'var(--s2)']]);
+
+  makeChart(`chart-tax-${idx}`, 820, 260, xVals, [
+    { label: 'default tax', color: 'var(--s1)', vals: rows.map(r => r[4] - r[1]) },
+    { label: 'tuned tax', color: 'var(--s2)', vals: rows.map(r => r[5] - r[2]) },
+  ], v => v.toFixed(0) + 'us', true);
+  legend(`legend-tax-${idx}`, [['default: contention − isolated', 'var(--s1)'], ['tuned: contention − isolated', 'var(--s2)']]);
+
+  const table = document.getElementById(`data-table-${idx}`);
+  let thead = '<thead><tr><th>M</th><th>default iso</th><th>tuned iso</th><th>speedup iso</th><th>default cont</th><th>tuned cont</th><th>speedup cont</th></tr></thead>';
+  let tbody = '<tbody>';
+  rows.forEach(([M, di, ti, si, dc, tc, sc]) => {
+    tbody += `<tr><td>${M}</td><td>${di.toFixed(1)}</td><td>${ti.toFixed(1)}</td><td>${si>0?'+':''}${si.toFixed(1)}%</td><td>${dc.toFixed(1)}</td><td>${tc.toFixed(1)}</td><td class="${sc<0?'neg':''}">${sc>0?'+':''}${sc.toFixed(1)}%</td></tr>`;
+  });
+  tbody += '</tbody>';
+  table.innerHTML = thead + tbody;
+});
+</script>

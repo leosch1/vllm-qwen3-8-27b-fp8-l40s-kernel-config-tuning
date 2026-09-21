@@ -1,0 +1,70 @@
+# Full production-scope (5 shapes x 18 M) autotuning run with vLLM's real,
+# stock tuner (only the shape list patched) -- produces original-tuned-
+# config/, the input compare_default_vs_tuned.py and e2e-server-pod.yaml
+# both measure. Expect ~2 hours for the full 5-shape sweep.
+#
+# Usage:
+#   kubectl apply -f original-autotune-job.yaml
+#   kubectl logs -f job/qwen3-8-27b-fp8-original-autotune
+#   kubectl cp <pod>:/repo/original-tuned-config ./original-tuned-config
+#   kubectl delete -f original-autotune-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-fp8-original-autotune
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      initContainers:
+        - name: clone-repo
+          image: docker.io/alpine/git:latest
+          args:
+            - clone
+            - --depth=1
+            - https://github.com/leosch1/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning.git
+            - /repo
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+      containers:
+        - name: autotune
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          workingDir: /repo
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              cp experiments/01-first-measurement/benchmark_w8a8_block_fp8_original.py .
+              python3 benchmark_w8a8_block_fp8_original.py \
+                --tp-size 2 --input-type fp8 --out-dtype bfloat16 \
+                --block-n 128 --block-k 128 \
+                --save-path /repo/original-tuned-config
+              echo "=== done, sleeping so results can be copied out ==="
+              sleep infinity
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "6"
+              memory: 28Gi
+              nvidia.com/gpu: "1"
+      volumes:
+        - name: repo
+          emptyDir: {}

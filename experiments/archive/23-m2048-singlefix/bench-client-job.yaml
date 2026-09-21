@@ -1,0 +1,64 @@
+# A separate, untraced client pod that drives `vllm bench serve` against the
+# profiling-enabled predictor's raw pod IP:8080 (bypassing the kube-rbac-proxy
+# auth sidecar, which only proxies 8443/8643 -- confirmed via a direct curl
+# health check). Deliberately NOT run via `oc exec` inside the traced pod:
+# the nsight-injector's --trace-fork-before-exec=true wraps every
+# forked/exec'd process against a fixed exclusion list that doesn't include
+# python3/vllm/nohup, so a client run that way gets wrapped in a second,
+# conflicting `nsys profile --gpu-metrics-devices=all` invocation that fails
+# with "Already under profiling" (see 20's README). A bare Pod also gets
+# stuck SchedulingGated forever in this cluster even after Kueue admits it --
+# a Job avoids that too.
+#
+# Tokenizer files are too large for a ConfigMap (~20MB), so the container
+# waits on an emptyDir marker file; after the Job's pod is Running, `oc cp`
+# the small tokenizer-related files (chat_template.jinja, config.json,
+# generation_config.json, preprocessor_config.json, tokenizer.json,
+# tokenizer_config.json, vocab.json) from the real predictor pod's
+# /mnt/models into this pod's /mnt/tokenizer, then touch the marker file.
+#
+# --host must point at the predictor's current pod IP (changes on every
+# rollout) -- patch before applying:
+#   oc -n enterprise-ai get pod -l serving.kserve.io/inferenceservice=qwen-27b-pr-evidence -o jsonpath='{.items[0].status.podIP}'
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: bench-client-throwaway
+  namespace: enterprise-ai
+spec:
+  template:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: gpu-autotune
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: bench-client
+        image: docker.io/vllm/vllm-openai:v0.27.1
+        command:
+        - bash
+        - -c
+        - |
+          set -e
+          echo "waiting for tokenizer files..."
+          while [ ! -f /mnt/tokenizer/.ready ]; do sleep 2; done
+          echo "tokenizer ready, running benchmark"
+          vllm bench serve \
+            --host=<serving-pod-ip> \
+            --port=8080 \
+            --model=qwen-27b-pr-evidence \
+            --tokenizer=/mnt/tokenizer \
+            --dataset-name=random \
+            --random-input-len=256 \
+            --random-output-len=128 \
+            --num-prompts=500 \
+            --max-concurrency=64
+        env:
+        - name: HOME
+          value: /tmp
+        volumeMounts:
+        - mountPath: /mnt/tokenizer
+          name: tokenizer-files
+      volumes:
+      - name: tokenizer-files
+        emptyDir: {}

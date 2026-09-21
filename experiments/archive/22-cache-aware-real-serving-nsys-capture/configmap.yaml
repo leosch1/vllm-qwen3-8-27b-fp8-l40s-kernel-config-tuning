@@ -1,0 +1,206 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cache-aware-tuned-configs-v2-profiling
+  namespace: enterprise-ai
+data:
+  gate_up_proj.json: "{\n  \"1\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\"\
+    : 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 3\n  },\n  \"2\": {\n    \"BLOCK_SIZE_M\": 16,\n   \
+    \ \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"4\": {\n    \"BLOCK_SIZE_M\"\
+    : 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 32,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"8\": {\n    \"\
+    BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"16\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n    \"num_stages\":\
+    \ 3\n  },\n  \"24\": {\n    \"BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n\
+    \    \"num_stages\": 3\n  },\n  \"32\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\"\
+    : 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 5\n  },\n  \"48\": {\n    \"BLOCK_SIZE_M\": 16,\n  \
+    \  \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n  \"64\": {\n    \"BLOCK_SIZE_M\"\
+    : 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 64,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"96\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  },\n\
+    \  \"128\": {\n    \"BLOCK_SIZE_M\": 64,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n    \"num_stages\":\
+    \ 5\n  },\n  \"256\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n\
+    \    \"num_stages\": 4\n  },\n  \"512\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"\
+    BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 8,\n    \"num_stages\": 3\n  },\n  \"1024\": {\n    \"BLOCK_SIZE_M\"\
+    : 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 32,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  },\n  \"1536\": {\n   \
+    \ \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n\
+    \    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n\
+    \  \"2048\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"\
+    BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n    \"\
+    num_stages\": 3\n  },\n  \"3072\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\"\
+    : 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 3\n  },\n  \"4096\": {\n    \"BLOCK_SIZE_M\": 128,\n\
+    \    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 1,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  }\n}\n"
+  in_proj_qkvz.json: "{\n  \"1\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\"\
+    : 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 3\n  },\n  \"2\": {\n    \"BLOCK_SIZE_M\": 32,\n   \
+    \ \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"4\": {\n    \"BLOCK_SIZE_M\"\
+    : 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 64,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"8\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"16\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 4,\n    \"num_stages\":\
+    \ 3\n  },\n  \"24\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 4,\n\
+    \    \"num_stages\": 3\n  },\n  \"32\": {\n    \"BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\"\
+    : 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 3\n  },\n  \"48\": {\n    \"BLOCK_SIZE_M\": 16,\n  \
+    \  \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"64\": {\n    \"BLOCK_SIZE_M\"\
+    : 64,\n    \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 32,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"96\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"128\": {\n    \"BLOCK_SIZE_M\": 64,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n    \"num_stages\":\
+    \ 3\n  },\n  \"256\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 8,\n\
+    \    \"num_stages\": 3\n  },\n  \"512\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"\
+    BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n  \"1024\": {\n    \"BLOCK_SIZE_M\"\
+    : 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 16,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n  \"1536\": {\n   \
+    \ \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n\
+    \    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n\
+    \  \"2048\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"\
+    BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 8,\n    \"\
+    num_stages\": 3\n  },\n  \"3072\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\"\
+    : 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 3\n  },\n  \"4096\": {\n    \"BLOCK_SIZE_M\": 128,\n\
+    \    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 1,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  }\n}\n"
+  qkv_proj.json: "{\n  \"1\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\":\
+    \ 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 3\n  },\n  \"2\": {\n    \"BLOCK_SIZE_M\": 16,\n   \
+    \ \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"4\": {\n    \"BLOCK_SIZE_M\"\
+    : 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 64,\n    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n  \"8\": {\n    \"\
+    BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n\
+    \  \"16\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n\
+    \  },\n  \"24\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n   \
+    \ \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n \
+    \   \"num_stages\": 3\n  },\n  \"32\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\"\
+    : 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 3\n  },\n  \"48\": {\n    \"BLOCK_SIZE_M\": 64,\n  \
+    \  \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"64\": {\n    \"BLOCK_SIZE_M\"\
+    : 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 64,\n    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n  \"96\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"128\": {\n    \"BLOCK_SIZE_M\": 64,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 8,\n    \"num_stages\":\
+    \ 5\n  },\n  \"256\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 8,\n\
+    \    \"num_stages\": 4\n  },\n  \"512\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"\
+    BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n  \"1024\": {\n    \"BLOCK_SIZE_M\"\
+    : 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 1,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n  \"1536\": {\n    \"\
+    BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n\
+    \    \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n\
+    \  \"2048\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"\
+    BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 8,\n    \"\
+    num_stages\": 3\n  },\n  \"3072\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\"\
+    : 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 4\n  },\n  \"4096\": {\n    \"BLOCK_SIZE_M\": 128,\n\
+    \    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 32,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  }\n}\n"
+  down_proj.json: "{\n  \"1\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\"\
+    : 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 5\n  },\n  \"2\": {\n    \"BLOCK_SIZE_M\": 16,\n   \
+    \ \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n  \"4\": {\n    \"BLOCK_SIZE_M\"\
+    : 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 32,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"8\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"16\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 4,\n    \"num_stages\":\
+    \ 5\n  },\n  \"24\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 4,\n\
+    \    \"num_stages\": 5\n  },\n  \"32\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\"\
+    : 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n    \"num_warps\"\
+    : 4,\n    \"num_stages\": 3\n  },\n  \"48\": {\n    \"BLOCK_SIZE_M\": 64,\n  \
+    \  \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n  \"64\": {\n    \"BLOCK_SIZE_M\"\
+    : 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 64,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"96\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"128\": {\n    \"BLOCK_SIZE_M\": 64,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n    \"num_stages\":\
+    \ 3\n  },\n  \"256\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 8,\n\
+    \    \"num_stages\": 3\n  },\n  \"512\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"\
+    BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n \
+    \   \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"1024\": {\n    \"BLOCK_SIZE_M\"\
+    : 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 16,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n  \"1536\": {\n   \
+    \ \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n\
+    \    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n\
+    \  \"2048\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"\
+    BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n    \"num_warps\": 8,\n    \"\
+    num_stages\": 4\n  },\n  \"3072\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\"\
+    : 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 3\n  },\n  \"4096\": {\n    \"BLOCK_SIZE_M\": 128,\n\
+    \    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 1,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  }\n}\n"
+  out_proj.json: "{\n  \"1\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\":\
+    \ 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 3\n  },\n  \"2\": {\n    \"BLOCK_SIZE_M\": 16,\n   \
+    \ \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n\
+    \    \"num_warps\": 8,\n    \"num_stages\": 3\n  },\n  \"4\": {\n    \"BLOCK_SIZE_M\"\
+    : 16,\n    \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 16,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"8\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n\
+    \  \"16\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 8,\n    \"num_stages\":\
+    \ 4\n  },\n  \"24\": {\n    \"BLOCK_SIZE_M\": 16,\n    \"BLOCK_SIZE_N\": 32,\n\
+    \    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 4,\n\
+    \    \"num_stages\": 4\n  },\n  \"32\": {\n    \"BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\"\
+    : 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 4\n  },\n  \"48\": {\n    \"BLOCK_SIZE_M\": 16,\n  \
+    \  \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 16,\n\
+    \    \"num_warps\": 4,\n    \"num_stages\": 3\n  },\n  \"64\": {\n    \"BLOCK_SIZE_M\"\
+    : 16,\n    \"BLOCK_SIZE_N\": 32,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 32,\n    \"num_warps\": 4,\n    \"num_stages\": 4\n  },\n  \"96\": {\n    \"\
+    BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n \
+    \   \"GROUP_SIZE_M\": 16,\n    \"num_warps\": 4,\n    \"num_stages\": 5\n  },\n\
+    \  \"128\": {\n    \"BLOCK_SIZE_M\": 32,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\"\
+    : 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n\
+    \  },\n  \"256\": {\n    \"BLOCK_SIZE_M\": 64,\n    \"BLOCK_SIZE_N\": 128,\n \
+    \   \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 64,\n    \"num_warps\": 4,\n\
+    \    \"num_stages\": 3\n  },\n  \"512\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"\
+    BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 32,\n \
+    \   \"num_warps\": 4,\n    \"num_stages\": 4\n  },\n  \"1024\": {\n    \"BLOCK_SIZE_M\"\
+    : 128,\n    \"BLOCK_SIZE_N\": 64,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 1,\n    \"num_warps\": 4,\n    \"num_stages\": 4\n  },\n  \"1536\": {\n    \"\
+    BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n\
+    \    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 8,\n    \"num_stages\": 4\n  },\n\
+    \  \"2048\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\": 128,\n    \"\
+    BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\": 8,\n    \"\
+    num_stages\": 4\n  },\n  \"3072\": {\n    \"BLOCK_SIZE_M\": 128,\n    \"BLOCK_SIZE_N\"\
+    : 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\": 1,\n    \"num_warps\"\
+    : 8,\n    \"num_stages\": 4\n  },\n  \"4096\": {\n    \"BLOCK_SIZE_M\": 128,\n\
+    \    \"BLOCK_SIZE_N\": 128,\n    \"BLOCK_SIZE_K\": 128,\n    \"GROUP_SIZE_M\"\
+    : 1,\n    \"num_warps\": 8,\n    \"num_stages\": 3\n  }\n}\n"

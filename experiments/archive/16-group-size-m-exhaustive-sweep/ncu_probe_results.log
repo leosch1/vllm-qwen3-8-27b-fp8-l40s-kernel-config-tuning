@@ -1,0 +1,26 @@
+=== ncu_probe.py results (Nsight Compute, Application Replay mode) ===
+M=1024, gate_up_proj (N=17408, K=5120). One A/B pair for the whole probe
+(never touched by any other M). Per GROUP_SIZE_M value: 10 dedicated
+warmup launches of that exact config, then 1 probe launch
+(--replay-mode application --launch-skip <N> --launch-count 1).
+
+Metrics: gpu__time_duration.sum, sm__throughput.avg.pct_of_peak_sustained_elapsed,
+dram__throughput.avg.pct_of_peak_sustained_elapsed, lts__t_sector_hit_rate.pct,
+dram__bytes_read.sum, dram__bytes_write.sum
+
+GROUP_SIZE_M=1:   duration=581.3us  DRAM read=170.4MB  DRAM write=32.7MB  DRAM throughput=42.4%  L2 hit rate=90.4%  SM throughput=50.6%
+GROUP_SIZE_M=16:  duration=520.1us  DRAM read=112.8MB  DRAM write=13.2MB  DRAM throughput=29.4%  L2 hit rate=93.6%  SM throughput=60.5%
+GROUP_SIZE_M=32:  duration=520.9us  DRAM read=112.8MB  DRAM write=13.3MB  DRAM throughput=29.4%  L2 hit rate=93.6%  SM throughput=60.6%
+GROUP_SIZE_M=64:  duration=518.6us  DRAM read=112.8MB  DRAM write=12.9MB  DRAM throughput=29.4%  L2 hit rate=93.6%  SM throughput=60.5%
+
+GROUP_SIZE_M=1 vs GROUP_SIZE_M=16 (fastest grouped value): +11.8% slower.
+
+Every metric is internally consistent with textbook cache-locality theory:
+GROUP_SIZE_M=1 moves ~1.5x the DRAM read bytes, achieves a LOWER L2 hit
+rate, a LOWER achieved DRAM-throughput percent (rules out the alternative
+"more memory-level parallelism" hypothesis -- if MLP were the explanation,
+GROUP_SIZE_M=1 should show HIGHER DRAM throughput%, not lower), and a
+LOWER SM throughput. This directly contradicts group_size_m_exhaustive.py's
+finding that GROUP_SIZE_M=1 wins at M=1024 by 5.7%, and was the trigger for
+building group_size_m_single_m.py to determine which measurement was the
+artifact.

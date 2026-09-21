@@ -1,0 +1,9 @@
+{
+  "description": "GPU_METRICS hardware counters averaged over each real-serving nsys capture, for the tuned config's gate_up_proj kernel launches specifically (the shape/config this project's investigation converges on). 'isolated' = the kernel-level benchmark from ../01-first-measurement/; 'real' = live serving under real client traffic at c=64.",
+  "unit": "percent of theoretical max",
+  "rows": [
+    {"benchmark": "isolated", "tensor_active_pct": 58.2, "dram_read_pct": 14.9},
+    {"benchmark": "real serving", "tensor_active_pct": 28.3, "dram_read_pct": 72.8}
+  ],
+  "dram_read_reference": "864 GB/s (NVIDIA L40S theoretical max memory bandwidth); 72.8% of that ~= 629 GB/s sustained during real serving"
+}

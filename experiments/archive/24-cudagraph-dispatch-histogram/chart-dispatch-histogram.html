@@ -1,0 +1,178 @@
+<title>Replayed vs. Eager Kernel Launches</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --replayed:       #1baf7a;
+  --eager:          #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27;
+    --replayed: #199e70; --eager: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27;
+  --replayed: #199e70; --eager: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 860px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 720px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 10px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 720px; }
+.panel-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 24px 0 8px; }
+</style>
+
+<div class="viz-root">
+  <h1>Real GEMM kernel launches by M, replayed vs. eager (exact, direct measurement)</h1>
+  <p class="sub">A live pod instrumented at the actual decision point (<code>CudagraphDispatcher.dispatch()</code>, called once per real forward step, both prefill and decode, regardless of outcome) &mdash; not inferred from gridX or graphId archaeology. Every dispatch call is logged with its exact <code>num_tokens</code> and resulting mode (<code>NONE</code>=eager, <code>PIECEWISE</code>/<code>FULL</code>=graph-replayed), then multiplied by 256 (the real per-step launch count of the GEMM kernel across all 5 shapes &times; their real layer counts: 64+48+16+64+64) to get exact launch counts. Real c=64 traffic, 500 requests, same benchmark parameters used throughout this project.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="panel-title">Startup (one-time model-init sweep)</div>
+  <div class="chart-wrap" id="chart-startup"></div>
+
+  <div class="panel-title">Real serving traffic (c=64, 500 requests)</div>
+  <div class="chart-wrap" id="chart-c64"></div>
+
+  <p class="note">Startup shows the full, evenly-spaced 35-point mixed-prefill-decode capture sweep (1,2,4,...,256) plus the single eager-only M=2048 memory-profiling pass &mdash; exactly matching the source-code-derived capture-size formula. Real traffic is completely different: <b>84.5% of all replayed steps land on M=64</b> (820 of 970) &mdash; the target concurrency itself, dominating everything else combined &mdash; while the eager (red) launches are almost all large-M prefill chunks (M=312 to M=2048), confirming eager execution during real serving is prefill traffic, not decode. Notably, M=2048 recurs 33 times during real traffic (not just once at startup) &mdash; consistent with the scheduler repeatedly hitting its <code>max_num_batched_tokens=2048</code> ceiling under sustained prefill load.</p>
+</div>
+
+<script>
+const DATA = {
+  startup: {
+    eager: [[1,512],[2,512],[4,512],[8,512],[16,512],[24,512],[32,512],[40,512],[48,512],[56,512],[64,512],[72,512],[80,512],[88,512],[96,512],[104,512],[112,512],[120,768],[128,1024],[136,256],[144,256],[152,256],[160,256],[168,256],[176,256],[184,256],[192,256],[200,256],[208,256],[216,256],[224,256],[232,256],[240,256],[248,512],[256,512],[2048,256]],
+    replayed: [[1,512],[2,512],[4,512],[8,512],[16,512],[24,512],[32,512],[40,512],[48,512],[56,512],[64,512],[72,512],[80,512],[88,512],[96,512],[104,512],[112,512],[120,768],[128,768],[136,256],[144,256],[152,256],[160,256],[168,256],[176,256],[184,256],[192,256],[200,256],[208,256],[216,256],[224,256],[232,256],[240,256],[248,512],[256,512]]
+  },
+  c64: {
+    eager: [[312,1792],[360,256],[562,256],[575,256],[829,256],[1003,256],[1217,256],[1431,256],[1833,1536],[1834,1536],[1835,4096],[2009,256],[2017,256],[2048,8448]],
+    replayed: [[1,256],[2,256],[9,256],[16,256],[23,256],[30,256],[37,256],[44,256],[49,256],[50,1536],[51,512],[52,30208],[63,3584],[64,209920],[256,256]]
+  }
+};
+
+const legend = document.getElementById('legend');
+[["replayed (FULL/PIECEWISE)", "var(--replayed)"], ["eager (NONE)", "var(--eager)"]].forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="background: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+function renderPanel(data, containerId) {
+  const W = 780, H = 340, PAD_L = 55, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+  const allM = [...data.eager.map(p=>p[0]), ...data.replayed.map(p=>p[0])];
+  const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+  function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+  const allVals = [...data.eager.map(p=>p[1]), ...data.replayed.map(p=>p[1])];
+  const yMinLog = 2; // floor at 100
+  const yMaxLog = Math.ceil(Math.log10(Math.max(...allVals)));
+  function yPos(v) { return PAD_T + plotH - (Math.log10(Math.max(v,1)) - yMinLog) / (yMaxLog - yMinLog) * plotH; }
+
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  for (let p = yMinLog; p <= yMaxLog; p++) {
+    const v = Math.pow(10, p);
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toLocaleString();
+    svg.appendChild(t);
+  }
+  [1,4,16,64,256,1024,4096].forEach(c => {
+    if (c < Math.pow(2,xMin) || c > Math.pow(2,xMax)) return;
+    const x = xPos(c);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 10);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = c;
+    svg.appendChild(t);
+  });
+  const xlab = document.createElementNS(svgNS, 'text');
+  xlab.setAttribute('class', 'axis-text');
+  xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+  xlab.setAttribute('text-anchor', 'middle');
+  xlab.textContent = 'M (batch size)';
+  svg.appendChild(xlab);
+
+  const barW = 3;
+  [["eager", "var(--eager)"], ["replayed", "var(--replayed)"]].forEach(([key, color]) => {
+    data[key].forEach(([m, v]) => {
+      const x = xPos(m), y = yPos(v);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', x - barW/2); rect.setAttribute('y', y);
+      rect.setAttribute('width', barW); rect.setAttribute('height', PAD_T + plotH - y);
+      rect.setAttribute('rx', 1);
+      rect.setAttribute('fill', color);
+      rect.setAttribute('opacity', '0.85');
+      rect.style.cursor = 'pointer';
+      rect.addEventListener('mouseenter', () => {
+        tooltip.innerHTML = `<div class="row"><span class="k">${key}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">launches</span><b>${v.toLocaleString()}</b></div>`;
+        tooltip.style.opacity = 1;
+      });
+      rect.addEventListener('mousemove', (e) => {
+        tooltip.style.left = (e.clientX + 14) + 'px';
+        tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+      });
+      rect.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+      svg.appendChild(rect);
+    });
+  });
+
+  document.getElementById(containerId).appendChild(svg);
+}
+
+renderPanel(DATA.startup, 'chart-startup');
+renderPanel(DATA.c64, 'chart-c64');
+</script>

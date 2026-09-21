@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qwen3-8-27b-fp8-dense-v0271-configs
+  namespace: enterprise-ai
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nutanix-volume
+  resources:
+    requests:
+      storage: 100Mi

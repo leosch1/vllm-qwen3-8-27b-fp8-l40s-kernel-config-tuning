@@ -1,0 +1,260 @@
+<title>GEMM Launch Durations by Shape × M</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --s4: #eda100; --s5: #e87ba4; --s7: #4a3aa7; --s-gray: #9b998f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --s4: #c98500; --s5: #d55181; --s7: #9085e9; --s-gray: #6f6e66;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --s4: #c98500; --s5: #d55181; --s7: #9085e9; --s-gray: #6f6e66;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 960px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 780px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 30px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; max-width: 780px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 6px; font-size: 12.5px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.swatch.sq { width: 10px; height: 10px; border-radius: 2px; }
+.band-strip { display: flex; height: 10px; width: 60px; border-radius: 2px; overflow: hidden; }
+.band-strip span { flex: 1; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+.callout {
+  border-left: 3px solid var(--s2); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout b { color: var(--text-primary); }
+.callout code, .panel-sub code { background: var(--surface-2); border-radius: 3px; padding: 0 3px; }
+</style>
+
+<div class="viz-root">
+  <h1>GEMM launch durations, decomposed by shape &times; exact batch size (M)</h1>
+  <p class="sub">Same underlying question as <a href="chart.html">chart.html</a>'s "Full distribution of GEMM launch durations" panel, and the same decomposition as <a href="chart-durations-by-shape.html">chart-durations-by-shape.html</a> / <a href="chart-durations-by-shape-and-mband.html">chart-durations-by-shape-and-mband.html</a> &mdash; every real captured <code>_w8a8_triton_block_scaled_mm</code> launch's individual duration, from the same reliable-instance captures (default/tuned &times; c=1/c=64; tuned uses instance B at both concurrencies for data-availability reasons &mdash; see <code>profiling-results/README.md</code>) &mdash; but here there's no M-banding at all: every (shape, exact real M-range recovered from that launch's own grid/block dims) combination that actually occurs gets its own fully distinct, individually-legended color. That's 59 legend entries across the 4 charts combined &mdash; deliberately more granular than the 6-band version, at the cost of a long legend. All 4 series are drawn as separate, stacked charts on one shared 70-log-bin x-axis (24&ndash;2135&micro;s, the full range across all 4) so duration is directly comparable top to bottom.</p>
+
+  <div class="panel-title">Full distribution of GEMM launch durations, by shape &times; exact M</div>
+  <div class="panel-sub">Segment color = one specific (GEMM shape, exact M-range) combination, reverse-mapped from real grid/block dims using <a href="../08-per-layer-shape-mapping/README.md"><code>08-per-layer-shape-mapping</code></a>'s formula (default: fixed <code>BLOCK_SIZE_M=64, BLOCK_SIZE_N=128</code>; tuned: per-anchor lookup from that shape's own tuned JSON) &mdash; no bucketing, each distinct real launch-grid value is its own entry. <code>out_proj</code> (N=5120,K=3072) and <code>down_proj</code> (N=5120,K=8704) share <code>N</code> and often produce an identical launch signature &mdash; that specific, structurally-irreducible collision keeps its own honest "either/or" combos rather than being forced apart; true <code>unmapped</code> launches (no formula match at all, M unrecoverable) are one flat gray entry. Colors are still grouped by shape (same base hue, continuously stepped light&rarr;dark by ascending M within that shape) purely so a legend this long stays visually scannable &mdash; every row below is its own independent legend entry, not implied shading. Dashed line marks the median; solid line marks the mean. Hover any segment for the exact combination, duration range, share, and count.</div>
+  <div class="legend" id="legend-combos" style="row-gap:6px; max-height:260px; overflow-y:auto; display:block; column-width:230px;"></div>
+
+  <div class="panel-sub" style="margin-bottom:2px; margin-top:14px; font-weight:600; color:var(--text-secondary);">concurrency = 64, default</div>
+  <div class="chart-wrap" id="chart-dist-c64-default"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64, tuned</div>
+  <div class="chart-wrap" id="chart-dist-c64-tuned"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1, default</div>
+  <div class="chart-wrap" id="chart-dist-c1-default"></div>
+
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1, tuned</div>
+  <div class="chart-wrap" id="chart-dist-c1-tuned"></div>
+
+  <div class="callout">The multiple peaks in the plain duration histogram are literally different GEMM shapes, not noise &mdash; and now every one of <code>gate_up_proj</code>'s ~10 distinct real M-values shows up as its own colored segment, tracing a near-continuous light-to-dark progression from its smallest M (~130&ndash;140&micro;s) up to its single largest-M entry: 1183&micro;s under default, <b>2133&micro;s under tuned</b> &mdash; that one specific entry is exactly the tail <code>chart.html</code>'s mean/median-gap analysis was chasing. Every other shape only ever populates its 2&ndash;5 smallest-M entries in either config &mdash; they see the same range of concurrent batch sizes as <code>gate_up_proj</code>, but only <code>gate_up_proj</code>'s largest-M entries turn into disproportionately long launches, confirming <a href="../08-per-layer-shape-mapping/README.md"><code>08</code></a>'s finding that the regression is specific to that one weight matrix at large <code>M</code>.</div>
+</div>
+
+<script>
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+function bindTooltip(el, htmlFn) {
+  el.addEventListener('mouseenter', () => { tooltip.innerHTML = htmlFn(); tooltip.style.opacity = 1; });
+  el.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+}
+
+function niceLogTicks(lo, hi) {
+  const candidates = [10,20,30,50,75,100,150,200,300,500,750,1000,1500,2000,3000,5000];
+  return candidates.filter(v => v >= lo && v <= hi);
+}
+
+const SHAPE_CATS = [
+  {key: "gate_up_proj", label: "gate_up_proj", color: "var(--s1)"},
+  {key: "in_proj_qkvz", label: "in_proj_qkvz", color: "var(--s2)"},
+  {key: "qkv_proj", label: "qkv_proj", color: "var(--s3)"},
+  {key: "out_proj", label: "out_proj", color: "var(--s4)"},
+  {key: "down_proj", label: "down_proj", color: "var(--s5)"},
+  {key: "out_proj_or_down_proj", label: "out_proj / down_proj (ambiguous)", color: "var(--s7)"},
+  {key: "unmapped", label: "unmapped (no clear shape)", color: "var(--s-gray)"},
+];
+// No M-banding: each shape's distinct real M-values are continuously stepped light -> base hue -> dark,
+// by ascending-M rank within that shape (rank/total computed once, below, from every gridX actually observed).
+// Each (shape, exact M) combo still gets its own fully distinct, individually-legended color -- the
+// continuous ramp (rather than fixed bands) is purely so an arbitrarily long per-shape run of legend
+// rows stays visually orderable at a glance.
+function rampFill(colorVar, rank, total) {
+  if (rank == null) return 'var(--s-gray)';
+  const t = total > 1 ? rank / (total - 1) : 0.5; // 0 (smallest M) .. 1 (largest M)
+  if (t < 0.5) {
+    const pct = 40 + (t / 0.5) * 60; // 40% color/60% white -> 100% color
+    return `color-mix(in oklab, ${colorVar} ${pct.toFixed(1)}%, white)`;
+  }
+  if (t > 0.5) {
+    const pct = 100 - ((t - 0.5) / 0.5) * 45; // 100% color -> 55% color/45% black
+    return `color-mix(in oklab, ${colorVar} ${pct.toFixed(1)}%, black)`;
+  }
+  return colorVar;
+}
+
+const CAT_COLOR = Object.fromEntries(SHAPE_CATS.map(c => [c.key, c.color]));
+const CAT_LABEL = Object.fromEntries(SHAPE_CATS.map(c => [c.key, c.label]));
+
+const SHAPE_FULLRES_DATA = {"bins":[24.2,25.8,27.5,29.32,31.26,33.33,35.53,37.88,40.38,43.05,45.9,48.93,52.16,55.61,59.29,63.2,67.38,71.83,76.58,81.64,87.04,92.79,98.93,105.46,112.44,119.87,127.79,136.23,145.24,154.84,165.07,175.98,187.61,200.01,213.23,227.33,242.35,258.37,275.45,293.65,313.06,333.75,355.81,379.33,404.4,431.13,459.62,490.0,522.39,556.91,593.72,632.96,674.8,719.4,766.95,817.64,871.68,929.29,990.71,1056.19,1126.0,1200.42,1279.76,1364.34,1454.52,1550.65,1653.14,1762.4,1878.89,2003.07,2135.46],"series":{"c64_default":{"n":536576,"median":86.6,"mean":139.8,"bin_cats":[[3,"out_proj_or_down_proj",40,14991],[4,"out_proj_or_down_proj",40,15764],[5,"out_proj_or_down_proj",40,90],[6,"out_proj_or_down_proj",200,19],[6,"out_proj_or_down_proj",40,96],[7,"out_proj_or_down_proj",200,25],[7,"out_proj_or_down_proj",240,382],[7,"out_proj_or_down_proj",40,70],[8,"out_proj_or_down_proj",200,69],[8,"out_proj_or_down_proj",40,265],[8,"out_proj_or_down_proj",240,320],[9,"out_proj_or_down_proj",200,13],[9,"out_proj_or_down_proj",40,9007],[9,"out_proj_or_down_proj",240,103],[10,"out_proj_or_down_proj",40,29141],[10,"out_proj_or_down_proj",240,127],[11,"out_proj_or_down_proj",200,2],[11,"out_proj_or_down_proj",40,33602],[11,"out_proj_or_down_proj",240,83],[12,"out_proj_or_down_proj",40,17709],[12,"out_proj_or_down_proj",240,9],[13,"out_proj_or_down_proj",40,1505],[14,"qkv_proj",56,39],[15,"qkv_proj",56,2402],[16,"qkv_proj",56,18818],[16,"in_proj_qkvz",64,466],[17,"qkv_proj",56,9269],[17,"in_proj_qkvz",64,39608],[17,"out_proj_or_down_proj",440,9],[18,"qkv_proj",56,26],[18,"in_proj_qkvz",64,46058],[18,"unmapped",null,1],[18,"out_proj_or_down_proj",440,48],[19,"unmapped",null,6],[19,"in_proj_qkvz",64,3709],[19,"qkv_proj",56,6],[19,"out_proj_or_down_proj",40,28415],[19,"out_proj_or_down_proj",440,29],[20,"unmapped",null,43],[20,"in_proj_qkvz",64,1801],[20,"out_proj_or_down_proj",40,2169],[20,"out_proj_or_down_proj",440,41],[21,"unmapped",null,84],[21,"in_proj_qkvz",64,9],[21,"out_proj_or_down_proj",40,57],[21,"out_proj_or_down_proj",440,1],[22,"out_proj_or_down_proj",200,26],[22,"unmapped",null,21],[22,"out_proj_or_down_proj",40,219],[22,"in_proj_qkvz",64,29],[23,"out_proj_or_down_proj",200,42],[23,"unmapped",null,5],[23,"out_proj_or_down_proj",40,137],[24,"out_proj_or_down_proj",200,57],[24,"out_proj_or_down_proj",40,7511],[24,"out_proj_or_down_proj",240,211],[24,"unmapped",null,50],[24,"out_proj_or_down_proj",720,23],[25,"out_proj_or_down_proj",200,3],[25,"out_proj_or_down_proj",40,81932],[25,"out_proj_or_down_proj",240,497],[25,"unmapped",null,392],[25,"out_proj_or_down_proj",720,55],[25,"qkv_proj",336,20],[25,"out_proj_or_down_proj",800,24],[26,"unmapped",null,233],[26,"out_proj_or_down_proj",40,1800],[26,"out_proj_or_down_proj",240,316],[26,"out_proj_or_down_proj",800,64],[26,"qkv_proj",336,64],[26,"out_proj_or_down_proj",720,50],[26,"in_proj_qkvz",384,87],[27,"unmapped",null,200],[27,"gate_up_proj",136,22912],[27,"out_proj_or_down_proj",800,39],[27,"qkv_proj",336,41],[27,"in_proj_qkvz",384,234],[28,"unmapped",null,109],[28,"gate_up_proj",136,7695],[28,"in_proj_qkvz",384,157],[28,"qkv_proj",336,66],[28,"out_proj_or_down_proj",800,1],[29,"unmapped",null,8],[29,"in_proj_qkvz",384,290],[29,"qkv_proj",336,65],[29,"out_proj_or_down_proj",920,43],[29,"gate_up_proj",136,106],[29,"out_proj_or_down_proj",1000,2],[30,"gate_up_proj",136,451],[30,"out_proj_or_down_proj",920,83],[30,"out_proj_or_down_proj",1000,90],[31,"gate_up_proj",136,90815],[31,"out_proj_or_down_proj",920,2],[31,"out_proj_or_down_proj",1000,36],[32,"unmapped",null,20],[32,"gate_up_proj",136,261],[32,"out_proj_or_down_proj",1200,240],[33,"unmapped",null,1671],[33,"out_proj_or_down_proj",1200,2787],[33,"in_proj_qkvz",704,14],[33,"qkv_proj",616,16],[34,"unmapped",null,2887],[34,"out_proj_or_down_proj",1200,1196],[34,"in_proj_qkvz",704,64],[34,"out_proj_or_down_proj",440,123],[34,"qkv_proj",616,16],[34,"qkv_proj",784,12],[35,"unmapped",null,379],[35,"in_proj_qkvz",704,18],[35,"out_proj_or_down_proj",440,5],[35,"qkv_proj",784,20],[35,"out_proj_or_down_proj",1200,1],[35,"gate_up_proj",816,74],[36,"unmapped",null,101],[36,"gate_up_proj",816,95],[37,"gate_up_proj",816,389],[37,"unmapped",null,90],[38,"gate_up_proj",816,466],[38,"unmapped",null,199],[38,"in_proj_qkvz",1024,146],[38,"qkv_proj",1008,21],[39,"unmapped",null,29],[39,"in_proj_qkvz",1024,238],[39,"qkv_proj",1008,11],[40,"unmapped",null,66],[40,"qkv_proj",1176,9],[40,"in_proj_qkvz",1152,1],[41,"qkv_proj",1176,85],[41,"unmapped",null,481],[41,"in_proj_qkvz",1152,85],[41,"out_proj_or_down_proj",720,127],[41,"qkv_proj",1288,10],[42,"unmapped",null,477],[42,"out_proj_or_down_proj",800,128],[42,"qkv_proj",1176,2],[42,"in_proj_qkvz",1152,10],[42,"out_proj_or_down_proj",720,1],[42,"qkv_proj",1288,22],[43,"unmapped",null,288],[44,"in_proj_qkvz",1472,90],[44,"unmapped",null,4],[44,"gate_up_proj",1496,2],[45,"unmapped",null,1148],[45,"gate_up_proj",1496,118],[45,"out_proj_or_down_proj",920,87],[45,"in_proj_qkvz",1472,6],[46,"unmapped",null,902],[46,"gate_up_proj",1496,8],[46,"out_proj_or_down_proj",920,41],[46,"out_proj_or_down_proj",1000,128],[47,"unmapped",null,3262],[48,"in_proj_qkvz",2048,1840],[48,"unmapped",null,349],[48,"out_proj_or_down_proj",1200,325],[49,"unmapped",null,4863],[49,"in_proj_qkvz",2048,1808],[49,"out_proj_or_down_proj",1200,3899],[50,"unmapped",null,512],[51,"gate_up_proj",2448,50],[52,"gate_up_proj",2448,78],[53,"gate_up_proj",2720,128],[53,"unmapped",null,38],[54,"unmapped",null,346],[55,"gate_up_proj",3128,128],[56,"gate_up_proj",3400,119],[57,"gate_up_proj",3400,9],[59,"gate_up_proj",4352,98],[59,"gate_up_proj",4080,4224],[60,"gate_up_proj",4352,4766]]},"c64_tuned":{"n":537088,"median":78.1,"mean":143.5,"bin_cats":[[0,"out_proj_or_down_proj",80,11892],[0,"out_proj_or_down_proj",160,19],[1,"out_proj_or_down_proj",80,19024],[1,"out_proj_or_down_proj",120,19],[1,"out_proj_or_down_proj",160,13],[2,"out_proj_or_down_proj",120,15],[2,"out_proj_or_down_proj",80,78],[3,"out_proj_or_down_proj",120,4],[3,"out_proj_or_down_proj",160,2],[3,"out_proj_or_down_proj",80,81],[4,"out_proj",200,3],[4,"out_proj_or_down_proj",80,52],[4,"out_proj_or_down_proj",120,17],[4,"out_proj_or_down_proj",160,25],[5,"out_proj",200,121],[5,"out_proj_or_down_proj",80,64206],[5,"out_proj_or_down_proj",240,91],[5,"out_proj_or_down_proj",120,41],[5,"out_proj_or_down_proj",160,67],[6,"out_proj",200,2],[6,"out_proj_or_down_proj",80,26522],[6,"out_proj_or_down_proj",240,451],[6,"out_proj_or_down_proj",120,32],[6,"out_proj_or_down_proj",160,2],[7,"out_proj",200,2],[7,"out_proj_or_down_proj",240,404],[7,"out_proj_or_down_proj",80,1],[8,"out_proj_or_down_proj",240,128],[9,"out_proj_or_down_proj",240,74],[10,"out_proj_or_down_proj",240,4],[12,"qkv_proj",224,5],[12,"qkv_proj",112,41],[13,"qkv_proj",112,153],[13,"qkv_proj",224,27],[14,"qkv_proj",112,1776],[14,"in_proj_qkvz",128,90],[14,"in_proj_qkvz",64,23],[15,"in_proj_qkvz",128,27332],[15,"qkv_proj",112,8191],[15,"out_proj_or_down_proj",80,90],[15,"in_proj_qkvz",256,94],[15,"out_proj_or_down_proj",160,31],[15,"in_proj_qkvz",64,73],[16,"out_proj_or_down_proj",80,30578],[16,"in_proj_qkvz",128,4697],[16,"qkv_proj",112,20318],[16,"out_proj_or_down_proj",120,32],[16,"out_proj_or_down_proj",160,2],[17,"in_proj_qkvz",128,28557],[17,"qkv_proj",112,17],[17,"out_proj",440,4],[17,"out_proj_or_down_proj",160,62],[17,"out_proj_or_down_proj",80,82],[18,"in_proj_qkvz",128,30643],[18,"out_proj",440,160],[18,"in_proj_qkvz",256,2],[18,"out_proj_or_down_proj",160,33],[18,"out_proj_or_down_proj",80,40],[19,"in_proj_qkvz",128,67],[19,"out_proj",440,625],[19,"out_proj_or_down_proj",80,217],[20,"out_proj_or_down_proj",80,13251],[20,"out_proj",440,106],[20,"in_proj_qkvz",128,6],[20,"out_proj_or_down_proj",120,27],[21,"out_proj_or_down_proj",80,77597],[21,"out_proj",440,1],[21,"out_proj_or_down_proj",120,69],[22,"out_proj",640,4],[22,"out_proj_or_down_proj",80,1],[23,"out_proj",640,91],[24,"out_proj",640,33],[24,"out_proj",760,1],[25,"out_proj_or_down_proj",240,163],[25,"in_proj_qkvz",192,141],[25,"qkv_proj",168,18],[25,"out_proj",760,111],[26,"in_proj_qkvz",192,293],[26,"out_proj_or_down_proj",240,1100],[26,"qkv_proj",168,121],[26,"gate_up_proj",272,121],[26,"out_proj",760,16],[27,"in_proj_qkvz",192,307],[27,"qkv_proj",168,76],[27,"out_proj_or_down_proj",240,17],[27,"gate_up_proj",272,163],[27,"gate_up_proj",136,28569],[27,"out_proj_or_down_proj",440,19],[28,"in_proj_qkvz",192,219],[28,"qkv_proj",168,105],[28,"gate_up_proj",272,93],[28,"out_proj_or_down_proj",440,89],[28,"gate_up_proj",136,1831],[28,"out_proj_or_down_proj",480,71],[28,"unmapped",null,1],[29,"out_proj_or_down_proj",440,20],[29,"out_proj_or_down_proj",480,57],[29,"unmapped",null,112],[29,"gate_up_proj",272,37],[29,"gate_up_proj",136,128],[30,"gate_up_proj",136,5423],[30,"unmapped",null,15],[31,"unmapped",null,236],[31,"gate_up_proj",136,85602],[31,"out_proj_or_down_proj",600,228],[31,"gate_up_proj",272,2],[31,"qkv_proj",336,8],[32,"unmapped",null,3576],[32,"gate_up_proj",136,47],[32,"out_proj_or_down_proj",600,4756],[32,"in_proj_qkvz",384,334],[32,"qkv_proj",336,203],[33,"gate_up_proj",408,20],[33,"unmapped",null,540],[33,"in_proj_qkvz",384,338],[33,"qkv_proj",336,13],[33,"out_proj_or_down_proj",600,8],[34,"gate_up_proj",408,346],[35,"gate_up_proj",408,785],[35,"out_proj_or_down_proj",480,1],[35,"gate_up_proj",272,8],[36,"gate_up_proj",408,129],[36,"out_proj_or_down_proj",480,886],[36,"unmapped",null,32],[36,"in_proj_qkvz",512,14],[36,"gate_up_proj",272,17],[37,"out_proj_or_down_proj",480,9],[37,"in_proj_qkvz",512,82],[37,"unmapped",null,30],[37,"gate_up_proj",272,50],[38,"unmapped",null,7],[38,"gate_up_proj",272,21],[39,"unmapped",null,123],[39,"down_proj",400,124],[39,"qkv_proj",616,6],[40,"in_proj_qkvz",704,45],[40,"qkv_proj",616,26],[40,"unmapped",null,95],[40,"down_proj",400,4],[40,"qkv_proj",672,32],[41,"in_proj_qkvz",704,51],[41,"unmapped",null,1],[42,"unmapped",null,6],[42,"qkv_proj",784,6],[43,"out_proj_or_down_proj",440,122],[43,"unmapped",null,1242],[43,"in_proj_qkvz",768,96],[43,"out_proj_or_down_proj",480,88],[43,"qkv_proj",784,26],[44,"out_proj_or_down_proj",440,6],[44,"out_proj_or_down_proj",480,40],[44,"unmapped",null,127],[45,"unmapped",null,3864],[46,"in_proj_qkvz",1024,10],[46,"unmapped",null,1065],[47,"unmapped",null,4327],[47,"in_proj_qkvz",1024,3249],[47,"out_proj_or_down_proj",600,4984],[48,"in_proj_qkvz",1024,5],[48,"unmapped",null,25],[48,"out_proj_or_down_proj",600,8],[52,"gate_up_proj",816,13],[53,"gate_up_proj",816,213],[54,"gate_up_proj",816,667],[55,"gate_up_proj",816,3],[57,"unmapped",null,2],[58,"unmapped",null,123],[59,"unmapped",null,3],[61,"gate_up_proj",1360,86],[62,"gate_up_proj",1496,7],[62,"gate_up_proj",1360,42],[63,"gate_up_proj",1496,121],[64,"gate_up_proj",1632,77],[65,"gate_up_proj",1632,51],[66,"gate_up_proj",1904,21],[67,"gate_up_proj",2040,622],[67,"gate_up_proj",1904,107],[68,"gate_up_proj",2176,491],[68,"gate_up_proj",2040,4369],[69,"gate_up_proj",2176,3861],[69,"gate_up_proj",2040,1]]},"c1_default":{"n":1310720,"median":99.0,"mean":100.6,"bin_cats":[[5,"out_proj_or_down_proj",200,11],[6,"out_proj_or_down_proj",200,326],[7,"out_proj_or_down_proj",200,439],[8,"out_proj_or_down_proj",200,1475],[8,"out_proj_or_down_proj",40,37871],[9,"out_proj_or_down_proj",200,263],[9,"out_proj_or_down_proj",40,286094],[10,"out_proj_or_down_proj",40,1155],[10,"out_proj_or_down_proj",200,23],[11,"out_proj_or_down_proj",200,23],[17,"qkv_proj",56,3],[18,"unmapped",null,8],[18,"qkv_proj",56,71417],[19,"unmapped",null,38],[19,"in_proj_qkvz",64,18023],[19,"qkv_proj",56,9860],[20,"unmapped",null,133],[20,"in_proj_qkvz",64,210510],[21,"unmapped",null,241],[21,"in_proj_qkvz",64,15307],[21,"out_proj_or_down_proj",40,1471],[21,"out_proj_or_down_proj",200,1],[22,"out_proj_or_down_proj",200,341],[22,"out_proj_or_down_proj",40,323551],[22,"unmapped",null,159],[23,"out_proj_or_down_proj",200,1006],[23,"out_proj_or_down_proj",40,98],[23,"unmapped",null,61],[24,"out_proj_or_down_proj",200,1164],[25,"unmapped",null,25],[25,"out_proj_or_down_proj",200,48],[26,"unmapped",null,208],[27,"unmapped",null,774],[28,"unmapped",null,772],[29,"gate_up_proj",136,901],[29,"unmapped",null,141],[30,"gate_up_proj",136,323757],[31,"gate_up_proj",136,462],[34,"unmapped",null,190],[35,"unmapped",null,1769],[36,"unmapped",null,601]]},"c1_tuned":{"n":1310720,"median":67.6,"mean":73.3,"bin_cats":[[0,"out_proj_or_down_proj",80,325058],[1,"out_proj_or_down_proj",80,58],[2,"out_proj_or_down_proj",80,4],[4,"out_proj",200,7],[5,"out_proj",200,2135],[6,"out_proj",200,369],[7,"out_proj",200,36],[8,"out_proj",200,13],[13,"qkv_proj",112,81277],[14,"qkv_proj",112,3],[15,"in_proj_qkvz",128,243790],[15,"out_proj_or_down_proj",80,251],[16,"out_proj_or_down_proj",80,324856],[16,"in_proj_qkvz",128,10],[17,"in_proj_qkvz",128,40],[17,"out_proj_or_down_proj",80,13],[24,"in_proj_qkvz",192,3],[25,"in_proj_qkvz",192,170],[25,"out_proj_or_down_proj",240,275],[25,"qkv_proj",168,57],[26,"in_proj_qkvz",192,650],[26,"out_proj_or_down_proj",240,2242],[26,"gate_up_proj",272,310030],[26,"qkv_proj",168,205],[27,"in_proj_qkvz",192,786],[27,"qkv_proj",168,248],[27,"gate_up_proj",272,15090],[27,"out_proj_or_down_proj",240,43],[28,"in_proj_qkvz",192,311],[28,"qkv_proj",168,130],[33,"gate_up_proj",408,147],[34,"gate_up_proj",408,1808],[35,"gate_up_proj",408,605]]}},"legend":[{"cat":"gate_up_proj","gridX":136,"rank":1,"total":16,"m_lo":1,"m_hi":64},{"cat":"gate_up_proj","gridX":272,"rank":0,"total":16,"m_lo":1,"m_hi":1},{"cat":"gate_up_proj","gridX":408,"rank":2,"total":16,"m_lo":257,"m_hi":384},{"cat":"gate_up_proj","gridX":816,"rank":3,"total":16,"m_lo":321,"m_hi":384},{"cat":"gate_up_proj","gridX":1496,"rank":7,"total":16,"m_lo":641,"m_hi":704},{"cat":"gate_up_proj","gridX":2448,"rank":4,"total":16,"m_lo":1089,"m_hi":1152},{"cat":"gate_up_proj","gridX":1360,"rank":5,"total":16,"m_lo":1153,"m_hi":1280},{"cat":"gate_up_proj","gridX":2720,"rank":6,"total":16,"m_lo":1217,"m_hi":1280},{"cat":"gate_up_proj","gridX":3128,"rank":8,"total":16,"m_lo":1409,"m_hi":1472},{"cat":"gate_up_proj","gridX":1632,"rank":9,"total":16,"m_lo":1409,"m_hi":1536},{"cat":"gate_up_proj","gridX":3400,"rank":10,"total":16,"m_lo":1537,"m_hi":1600},{"cat":"gate_up_proj","gridX":1904,"rank":11,"total":16,"m_lo":1665,"m_hi":1792},{"cat":"gate_up_proj","gridX":2040,"rank":12,"total":16,"m_lo":1793,"m_hi":1920},{"cat":"gate_up_proj","gridX":4080,"rank":13,"total":16,"m_lo":1857,"m_hi":1920},{"cat":"gate_up_proj","gridX":2176,"rank":14,"total":16,"m_lo":1921,"m_hi":2048},{"cat":"gate_up_proj","gridX":4352,"rank":15,"total":16,"m_lo":1985,"m_hi":2048},{"cat":"in_proj_qkvz","gridX":64,"rank":1,"total":12,"m_lo":1,"m_hi":64},{"cat":"in_proj_qkvz","gridX":128,"rank":0,"total":12,"m_lo":1,"m_hi":1},{"cat":"in_proj_qkvz","gridX":256,"rank":2,"total":12,"m_lo":33,"m_hi":40},{"cat":"in_proj_qkvz","gridX":192,"rank":3,"total":12,"m_lo":129,"m_hi":192},{"cat":"in_proj_qkvz","gridX":384,"rank":4,"total":12,"m_lo":321,"m_hi":384},{"cat":"in_proj_qkvz","gridX":704,"rank":7,"total":12,"m_lo":641,"m_hi":704},{"cat":"in_proj_qkvz","gridX":512,"rank":5,"total":12,"m_lo":897,"m_hi":1024},{"cat":"in_proj_qkvz","gridX":1024,"rank":10,"total":12,"m_lo":961,"m_hi":1024},{"cat":"in_proj_qkvz","gridX":1152,"rank":6,"total":12,"m_lo":1089,"m_hi":1152},{"cat":"in_proj_qkvz","gridX":1472,"rank":8,"total":12,"m_lo":1409,"m_hi":1472},{"cat":"in_proj_qkvz","gridX":768,"rank":9,"total":12,"m_lo":1409,"m_hi":1536},{"cat":"in_proj_qkvz","gridX":2048,"rank":11,"total":12,"m_lo":1985,"m_hi":2048},{"cat":"qkv_proj","gridX":56,"rank":2,"total":11,"m_lo":1,"m_hi":64},{"cat":"qkv_proj","gridX":112,"rank":0,"total":11,"m_lo":1,"m_hi":1},{"cat":"qkv_proj","gridX":224,"rank":1,"total":11,"m_lo":17,"m_hi":20},{"cat":"qkv_proj","gridX":168,"rank":3,"total":11,"m_lo":129,"m_hi":192},{"cat":"qkv_proj","gridX":336,"rank":4,"total":11,"m_lo":321,"m_hi":384},{"cat":"qkv_proj","gridX":616,"rank":7,"total":11,"m_lo":641,"m_hi":704},{"cat":"qkv_proj","gridX":784,"rank":10,"total":11,"m_lo":833,"m_hi":896},{"cat":"qkv_proj","gridX":1008,"rank":5,"total":11,"m_lo":1089,"m_hi":1152},{"cat":"qkv_proj","gridX":1176,"rank":6,"total":11,"m_lo":1281,"m_hi":1344},{"cat":"qkv_proj","gridX":1288,"rank":8,"total":11,"m_lo":1409,"m_hi":1472},{"cat":"qkv_proj","gridX":672,"rank":9,"total":11,"m_lo":1409,"m_hi":1536},{"cat":"out_proj","gridX":200,"rank":0,"total":4,"m_lo":257,"m_hi":320},{"cat":"out_proj","gridX":440,"rank":1,"total":4,"m_lo":641,"m_hi":704},{"cat":"out_proj","gridX":640,"rank":2,"total":4,"m_lo":961,"m_hi":1024},{"cat":"out_proj","gridX":760,"rank":3,"total":4,"m_lo":1153,"m_hi":1216},{"cat":"down_proj","gridX":400,"rank":0,"total":1,"m_lo":513,"m_hi":640},{"cat":"out_proj_or_down_proj","gridX":40,"rank":2,"total":14,"m_lo":1,"m_hi":64},{"cat":"out_proj_or_down_proj","gridX":80,"rank":0,"total":14,"m_lo":1,"m_hi":1},{"cat":"out_proj_or_down_proj","gridX":160,"rank":1,"total":14,"m_lo":17,"m_hi":20},{"cat":"out_proj_or_down_proj","gridX":120,"rank":3,"total":14,"m_lo":81,"m_hi":96},{"cat":"out_proj_or_down_proj","gridX":200,"rank":4,"total":14,"m_lo":257,"m_hi":320},{"cat":"out_proj_or_down_proj","gridX":240,"rank":5,"total":14,"m_lo":321,"m_hi":384},{"cat":"out_proj_or_down_proj","gridX":440,"rank":6,"total":14,"m_lo":641,"m_hi":704},{"cat":"out_proj_or_down_proj","gridX":480,"rank":7,"total":14,"m_lo":705,"m_hi":768},{"cat":"out_proj_or_down_proj","gridX":600,"rank":8,"total":14,"m_lo":897,"m_hi":960},{"cat":"out_proj_or_down_proj","gridX":720,"rank":9,"total":14,"m_lo":1089,"m_hi":1152},{"cat":"out_proj_or_down_proj","gridX":800,"rank":10,"total":14,"m_lo":1217,"m_hi":1280},{"cat":"out_proj_or_down_proj","gridX":920,"rank":11,"total":14,"m_lo":1409,"m_hi":1472},{"cat":"out_proj_or_down_proj","gridX":1000,"rank":12,"total":14,"m_lo":1537,"m_hi":1600},{"cat":"out_proj_or_down_proj","gridX":1200,"rank":13,"total":14,"m_lo":1857,"m_hi":1920},{"cat":"unmapped","gridX":null,"rank":0,"total":1,"m_lo":null,"m_hi":null}]};
+
+// Build the flat legend + a rank/total lookup from the embedded per-(shape,gridX) legend metadata.
+const RANK_MAP = {};
+SHAPE_FULLRES_DATA.legend.forEach(e => {
+  if (e.cat === 'unmapped') return;
+  RANK_MAP[e.cat + '|' + e.gridX] = { rank: e.rank, total: e.total };
+});
+
+function comboLabel(e) {
+  if (e.cat === 'unmapped') return CAT_LABEL[e.cat];
+  const mTxt = e.m_lo != null ? `M ${e.m_lo}\u2013${e.m_hi}` : `grid=${e.gridX}`;
+  return `${CAT_LABEL[e.cat]}, ${mTxt}`;
+}
+function comboFill(e) {
+  if (e.cat === 'unmapped') return 'var(--s-gray)';
+  return rampFill(CAT_COLOR[e.cat], e.rank, e.total);
+}
+
+document.getElementById('legend-combos').innerHTML = SHAPE_FULLRES_DATA.legend.map(e =>
+  `<div class="legend-item"><span class="swatch sq" style="background:${comboFill(e)}"></span>${comboLabel(e)}</div>`
+).join('');
+
+function renderShapeDistChart(bins, series, containerId) {
+  const W = 880, H = 210, PAD_L = 48, PAD_R = 16, PAD_T = 12, PAD_B = 24;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const nBins = bins.length - 1;
+  const logLo = Math.log10(bins[0]), logHi = Math.log10(bins[bins.length-1]);
+  const xPos = v => PAD_L + (Math.log10(v) - logLo) / (logHi - logLo) * plotW;
+
+  const n = series.n;
+  const binCats = series.bin_cats;
+  const totals = Array(nBins).fill(0);
+  binCats.forEach(([bi, , , cnt]) => { totals[bi] += cnt; });
+  const pctArr = totals.map(cnt => 100 * cnt / n);
+  const maxPct = Math.max(...pctArr) * 1.08;
+  const yPos = v => PAD_T + plotH - (v / maxPct) * plotH;
+
+  [0, maxPct*0.25, maxPct*0.5, maxPct*0.75, maxPct].forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toFixed(1) + '%'; svg.appendChild(t);
+  });
+
+  niceLogTicks(bins[0], bins[bins.length-1]).forEach(v => {
+    const x = xPos(v);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 8); t.setAttribute('text-anchor', 'middle');
+    t.textContent = v >= 1000 ? (v/1000)+'ms' : v+'µs'; svg.appendChild(t);
+  });
+
+  const grouped = Array.from({length: nBins}, () => []);
+  binCats.forEach(([bi, cat, band, cnt]) => grouped[bi].push([cat, band, cnt]));
+
+  for (let i = 0; i < nBins; i++) {
+    const entries = grouped[i];
+    if (!entries.length) continue;
+    const x0 = xPos(bins[i]), x1 = xPos(bins[i+1]);
+    const width = Math.max(0.4, x1 - x0 - 0.4);
+    const binCount = entries.reduce((sum, [, , cnt]) => sum + cnt, 0);
+    let stacked = 0;
+    // stable draw order: fixed category order, then by gridX (~ ascending M) ascending
+    SHAPE_CATS.map(c => c.key).forEach(cat => {
+      // sort by rank (ascending recovered M), not raw gridX -- gridX isn't always M-monotonic across tuned anchors
+      const rankOf = gx => (gx == null ? -1 : (RANK_MAP[cat + '|' + gx]?.rank ?? -1));
+      entries.filter(([k]) => k === cat).sort((a, b) => rankOf(a[1]) - rankOf(b[1])).forEach(([, gridX, cnt]) => {
+        const pct = pctArr[i] * cnt / binCount;
+        const top = yPos(stacked + pct), bottom = yPos(stacked);
+        const rect = document.createElementNS(svgNS, 'rect');
+        rect.setAttribute('x', x0); rect.setAttribute('y', top);
+        rect.setAttribute('width', width); rect.setAttribute('height', Math.max(0.25, bottom - top));
+        const rankInfo = RANK_MAP[cat + '|' + gridX];
+        rect.setAttribute('fill', rankInfo ? rampFill(CAT_COLOR[cat], rankInfo.rank, rankInfo.total) : 'var(--s-gray)');
+        rect.setAttribute('stroke', 'var(--surface-1)');
+        rect.setAttribute('stroke-width', '0.2'); rect.style.cursor = 'pointer';
+        const mEntry = SHAPE_FULLRES_DATA.legend.find(e => e.cat === cat && e.gridX === gridX);
+        const mTxt = mEntry && mEntry.m_lo != null ? `M ${mEntry.m_lo}–${mEntry.m_hi}` : (gridX == null ? '—' : `grid=${gridX}`);
+        bindTooltip(rect, () => `<div class="row"><span class="k">range</span><b>${bins[i].toFixed(0)}&ndash;${bins[i+1].toFixed(0)}µs</b></div><div class="row"><span class="k">shape</span><b>${CAT_LABEL[cat]}</b></div><div class="row"><span class="k">M</span><b>${mTxt}</b></div><div class="row"><span class="k">share</span><b>${pct.toFixed(2)}%</b></div><div class="row"><span class="k">launches</span><b>${cnt.toLocaleString()}</b></div>`);
+        svg.appendChild(rect);
+        stacked += pct;
+      });
+    });
+  }
+
+  function vline(v, dash, labelText) {
+    const x = xPos(v);
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x); l.setAttribute('x2', x); l.setAttribute('y1', PAD_T); l.setAttribute('y2', PAD_T + plotH);
+    l.setAttribute('stroke', 'var(--text-primary)'); l.setAttribute('stroke-width', '1.25'); l.setAttribute('stroke-opacity', '0.55');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(l);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', PAD_T + 8); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', 'var(--text-primary)'); t.textContent = labelText;
+    svg.appendChild(t);
+  }
+  vline(series.median, '4 3', 'med');
+  vline(series.mean, null, 'mean');
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderShapeDistChart(SHAPE_FULLRES_DATA.bins, SHAPE_FULLRES_DATA.series.c64_default, 'chart-dist-c64-default');
+renderShapeDistChart(SHAPE_FULLRES_DATA.bins, SHAPE_FULLRES_DATA.series.c64_tuned, 'chart-dist-c64-tuned');
+renderShapeDistChart(SHAPE_FULLRES_DATA.bins, SHAPE_FULLRES_DATA.series.c1_default, 'chart-dist-c1-default');
+renderShapeDistChart(SHAPE_FULLRES_DATA.bins, SHAPE_FULLRES_DATA.series.c1_tuned, 'chart-dist-c1-tuned');
+</script>

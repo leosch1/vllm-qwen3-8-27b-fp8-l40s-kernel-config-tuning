@@ -1,0 +1,81 @@
+# 31b -- ISOLATED single-M run at M=2048, gate_up_proj, gpu-node-b.
+#
+# Minimal-diff counterpart to experiment 30. exp30/exp30b ran the unmodified
+# tuner over gate_up_proj with the FULL 18-M sweep (batch_size=None) and
+# reproduced GROUP_SIZE_M=1 at all six large-M anchors, on two different
+# GPUs (18/18 including the committed config). Isolated single-M runs at
+# M=1024 (experiments 27, 29b) instead gave grouped values in 8 of 9 runs.
+#
+# This job is byte-identical to experiments/30's job EXCEPT one value:
+#   batch_size=None  ->  batch_size=2048
+# so "full sweep vs. single M" is the only variable. Same unmodified script
+# (leosch1/vllm@qwen3-8-27b-fp8-dense-tuning), same gate_up_proj-only shape
+# override, same v0.27.1 image, one cold run per pod (no repeats -- repeats
+# of the same shape back-to-back are what experiment 29 did, and that
+# structure produced GROUP_SIZE_M=1 6/6, so it would confound this test).
+#
+# Run as a pair, one per node, exactly like exp30/exp30b, to get two
+# independent cold datapoints.
+#
+# Expectation if the context effect holds at M=2048: grouped values, NOT 1.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-exp31b-m2048-isolated
+  namespace: enterprise-ai
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-autotune
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: gpu-autotune
+    spec:
+      restartPolicy: Never
+      tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Equal
+        value: present
+      initContainers:
+      - name: clone-repo
+        image: docker.io/alpine/git:latest
+        args:
+        - clone
+        - --depth=1
+        - --branch=qwen3-8-27b-fp8-dense-tuning
+        - https://github.com/leosch1/vllm.git
+        - /repo/vllm
+        volumeMounts:
+        - mountPath: /repo
+          name: repo
+      containers:
+      - name: exp31b-m2048-isolated
+        image: docker.io/vllm/vllm-openai:v0.27.1
+        workingDir: /repo/vllm/benchmarks/kernels
+        env:
+        - name: HOME
+          value: /tmp
+        volumeMounts:
+        - mountPath: /repo
+          name: repo
+        resources:
+          requests:
+            cpu: '2'
+            memory: 16Gi
+            nvidia.com/gpu: '1'
+          limits:
+            cpu: '6'
+            memory: 28Gi
+            nvidia.com/gpu: '1'
+        command:
+        - /bin/bash
+        - -c
+        args:
+        - "set -euo pipefail\n\necho \"=== commit of the tuning script being run (git binary absent in this image) ===\"\ncat /repo/vllm/.git/HEAD || true\ncat /repo/vllm/.git/refs/heads/* 2>/dev/null || true\necho \"\"\necho \"=== sanity: confirm the script is unmodified ===\"\nmd5sum /repo/vllm/benchmarks/kernels/benchmark_w8a8_block_fp8.py\ngrep -c \"flush\\|Cycling\" /repo/vllm/benchmarks/kernels/benchmark_w8a8_block_fp8.py \\\n  && echo \"WARNING: fix markers present\" || echo \"no flush/cycling markers -> unfixed, as intended\"\necho \"\"\n\ncat > /repo/driver.py <<'DRIVER_EOF'\n\"\"\"Runs the UNMODIFIED tuning script over gate_up_proj only, full 18-M sweep.\n\nget_weight_shapes() is the single thing overridden. main() resolves it in\nthe parent process and passes the result through process_args, so the\noverride survives mp.Pool's spawn. tune()/benchmark_config() are untouched.\n\"\"\"\nimport argparse\nimport importlib.util\nimport json\nimport sys\n\nspec = importlib.util.spec_from_file_location(\n    \"benchmark_w8a8_block_fp8\",\n    \"/repo/vllm/benchmarks/kernels/benchmark_w8a8_block_fp8.py\",\n)\nmod = importlib.util.module_from_spec(spec)\nsys.modules[spec.name] = mod\nspec.loader.exec_module(mod)\n\nGATE_UP_PROJ = [(17408, 5120)]\nmod.get_weight_shapes = lambda tp_size: GATE_UP_PROJ\n\nif __name__ == \"__main__\":\n    args = argparse.Namespace(\n        tp_size=2,\n        input_type=\"fp8\",\n        out_dtype=\"bfloat16\",\n        block_n=128,\n        block_k=128,\n        batch_size=2048,          # <- SINGLE M, the only diff vs exp30\n        save_path=\"/repo/m2048-isolated-configs\",\n    )\n    mod.main(args)\n\n    path = (\"/repo/m2048-isolated-configs/N=17408,K=5120,\"\n            \"device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json\")\n    with open(path) as f:\n        cfgs = json.load(f)\n    print(\"\\n=== CONFIG_JSON_BEGIN gate_up_proj ===\", flush=True)\n    print(json.dumps(cfgs, indent=2), flush=True)\n    print(\"=== CONFIG_JSON_END gate_up_proj ===\", flush=True)\n    print(\"\\n=== GROUP_SIZE_M by M ===\", flush=True)\n    for m in sorted(cfgs, key=int):\n        print(f\"  M={m:>5}: GROUP_SIZE_M={cfgs[m]['GROUP_SIZE_M']:>3}   {cfgs[m]}\",\n              flush=True)\nDRIVER_EOF\n\npython3 /repo/driver.py\n\necho \"=== final file listing ===\"\nls -la /repo/m2048-isolated-configs\necho \"=== done, sleeping so data can be copied out ===\"\nsleep infinity\n"
+      volumes:
+      - name: repo
+        emptyDir: {}
+      nodeSelector:
+        kubernetes.io/hostname: gpu-node-b

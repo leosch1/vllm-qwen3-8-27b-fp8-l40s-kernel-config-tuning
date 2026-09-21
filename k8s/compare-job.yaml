@@ -1,5 +1,8 @@
-# Reproduces the kernel-level default-vs-tuned results: clones this repo,
-# then runs compare_default_vs_tuned.py against the tuned-configs/*.json
+# Reproduces the kernel-level default-vs-tuned results in the root README:
+# clones this repo, then runs compare_default_vs_l2flush_l2flushed.py
+# against the committed tuned-configs/, both configs timed under a direct
+# L2 flush before every launch -- the same mechanism that actually
+# produced the winning config.
 #
 # Usage: kubectl apply -f compare-job.yaml
 # Once the pod reaches the "sleeping" log line, read the results and clean up:
@@ -32,8 +35,8 @@ spec:
               name: repo
       containers:
         - name: compare
-          # Already has vllm==0.27.1 installed, so compare_default_vs_tuned.py's
-          # `from vllm...` imports work with no extra pip install.
+          # Already has vllm==0.27.1 installed, so the script's `from vllm...`
+          # imports work with no extra pip install.
           image: docker.io/vllm/vllm-openai:v0.27.1
           workingDir: /repo
           env:
@@ -45,7 +48,7 @@ spec:
           args:
             - |
               set -euo pipefail
-              python3 compare_default_vs_tuned.py
+              python3 compare_default_vs_l2flush_l2flushed.py
               echo "=== done, sleeping so logs can be read ==="
               sleep infinity
           volumeMounts:

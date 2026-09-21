@@ -1,0 +1,39 @@
+=== Version/kernel-source diagnostic: upstream vllm-openai:v0.27.1 vs
+registry.redhat.io/rhaii/vllm-cuda-rhel9:3.5.0 ===
+
+vllm-openai:v0.27.1 (produced this repo's own committed tuned-configs/):
+  vllm.__version__   = 0.27.1
+  triton.__version__ = 3.7.1
+  torch.__version__  = 2.13.0+cu130
+  torch.version.cuda = 13.0
+  gpu name           = NVIDIA L40S
+
+registry.redhat.io/rhaii/vllm-cuda-rhel9:3.5.0 (production; what experiment
+17's stability check and this experiment's RHOAI cross-check ran on):
+  vllm.__version__   = 0.24.0+rhaiv.9
+  triton.__version__ = 3.6.0
+  torch.__version__  = 2.11.0a0+git069d5d8
+  torch.version.cuda = 13.0
+  gpu name           = NVIDIA L40S
+
+_w8a8_triton_block_scaled_mm kernel source: IDENTICAL between both images
+(same grid-swizzle formula, same tl.dot logic, byte-for-byte the same
+Triton kernel definition -- confirmed via inspect.getsource(.fn) on both).
+
+Conclusion: the tuning algorithm (get_configs_compute_bound/tune/
+benchmark_config logic) and the Triton kernel SOURCE being tuned are the
+same on both images. What differs is the compiler/runtime stack tuning it
+runs on: Triton 3.6.0 vs 3.7.1, PyTorch 2.11.0a0 (RHOAI's is a dev/nightly
+build) vs 2.13.0, vLLM 0.24.0+rhaiv.9 (RHOAI's own patched fork of an
+older vLLM base) vs 0.27.1. CUDA version and GPU model are identical
+(13.0, NVIDIA L40S) -- so hardware/CUDA aren't the differentiator.
+
+Most plausible candidate for the different GROUP_SIZE_M behavior: the
+Triton JIT compiler version. The exact same kernel source can be code-
+generated/scheduled differently by different Triton versions (different
+codegen heuristics, register allocation, instruction scheduling), which
+can genuinely shift which GROUP_SIZE_M value performs best for the same
+shape on the same GPU. Not independently verified at the PTX/SASS level
+(would need to dump and diff generated device code between the two
+Triton versions to confirm this mechanistically) -- flagged as the
+leading candidate, not a proven root cause.

@@ -1,0 +1,38 @@
+vllm bench serve --max-concurrency 64 --num-prompts 500 --request-rate inf
+Config: default, instance B (pod qwen-27b-pr-evidence-predictor-8d5f9b74c-82f4q)
+nsys collection: 62f643ea-cd59-4182-9858-7dc380e6c8ec (run #2)
+
+============ Serving Benchmark Result ============
+Successful requests:                     500
+Failed requests:                         0
+Maximum request concurrency:             64
+Benchmark duration (s):                  85.05
+Total input tokens:                      154206
+Total generated tokens:                  64000
+Request throughput (req/s):              5.88
+Output token throughput (tok/s):         752.50
+Peak output token throughput (tok/s):    1319.00
+Peak concurrent requests:                92.00
+Total token throughput (tok/s):          2565.64
+---------------Time to First Token----------------
+Mean TTFT (ms):                          1416.90
+Median TTFT (ms):                        1176.57
+P99 TTFT (ms):                           5159.13
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          73.12
+Median TPOT (ms):                        73.83
+P99 TPOT (ms):                           81.52
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           72.70
+Median ITL (ms):                         54.21
+P99 ITL (ms):                            416.42
+==================================================
+
+--- Repeat run on the same pod instance (run #3, collection c835eeb0-ef94-41f8-b896-c918f6a43579) ---
+Confirmed nsys GEMM launch count matched run #2 exactly (536,576), proving
+same-pod repeats are deterministic. Raw .nsys-rep for run #3 was not saved
+(pod has since been replaced). Its bench-serve result:
+
+Benchmark duration (s):                  83.95
+Mean TPOT (ms):                          73.27
+(other fields consistent with run #2 within normal noise)

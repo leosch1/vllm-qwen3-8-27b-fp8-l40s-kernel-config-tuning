@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""GROUP_SIZE_M candidate-order bias probe (experiment 16, follow-up #2).
+
+Open question after group_size_m_single_m.py and ncu_probe.py: those both
+confirmed GROUP_SIZE_M=1 genuinely LOSES under careful, no-switching
+measurement (~11-12%) even with the SAME A/B tensor pair reused across the
+whole run -- yet the real tuning script (benchmark_w8a8_block_fp8.py)
+still landed on GROUP_SIZE_M=1 for every gate_up_proj M-bucket >= 512.
+
+The real tuner's own get_configs_compute_bound() puts GROUP_SIZE_M as the
+INNERMOST loop, testing candidates in the fixed order [1, 16, 32, 64], and
+tune()'s selection rule is strict `<` (a later candidate must beat, not
+just match, the current best_time -- ties keep the incumbent):
+
+    best_time = float("inf")
+    for config in search_space:
+        kernel_time = benchmark_config(...)
+        if kernel_time < best_time:
+            best_time = kernel_time
+            best_config = config
+
+Combined with the real tuner's tiny 10-iteration/candidate sample (vs.
+this project's own 1600-iteration/condition follow-ups), this raises a
+specific, testable hypothesis: GROUP_SIZE_M=1 isn't winning because it's
+genuinely fastest under the tuner's own measurement -- it's winning
+because it's tested FIRST, and the real-but-small gap grouped values
+should show over it isn't reliably large enough, at just 10 iterations,
+to clear the strict-less-than bar every time.
+
+This script tests that directly: runs the REAL tuner's own
+benchmark_config() (imported verbatim from _vendored_matmul_timing, same
+5-warmup+10-iter regime, same documented /10 timing-bug scaling as every
+other script in this project) for GROUP_SIZE_M in {1,16,32,64}, holding
+gate_up_proj's actual M=1024 winning BLOCK_SIZE_M/N/K/num_warps/num_stages
+fixed and ONE A/B/As/Bs pair fixed for the entire script (no cross-M, no
+cross-trial tensor switching -- matches the real tuner's own within-one-M
+methodology exactly). Repeats this "best-of-4" trial N_TRIALS times in two
+conditions:
+
+  - forward order  [1, 16, 32, 64]  -- exactly the real tuner's own order
+  - reversed order [64, 32, 16, 1]  -- same everything else, 1 now goes last
+
+If GROUP_SIZE_M=1 wins ("is the min of the 4, `<`-selected") far more than
+25% of the time in forward order but far LESS than 25% in reversed order
+(with 64 winning disproportionately instead, now that IT is first) --
+that's direct proof of a first-tested-wins artifact from the strict `<`
+tie-break, not a real value-specific effect. If GROUP_SIZE_M=1 wins about
+equally often regardless of order, the order-effect theory is wrong and
+something else is going on.
+"""
+import json
+
+import torch
+
+from _vendored_matmul_timing import benchmark_config
+from vllm.utils.platform_utils import get_device_name_as_file_name
+
+BLOCK_N, BLOCK_K = 128, 128
+OUT_DTYPE = torch.bfloat16
+TUNED_DIR = "./tuned-configs"
+N, K = 17408, 5120  # gate_up_proj
+M = 1024
+GROUP_CANDIDATES = [1, 16, 32, 64]
+FORWARD_ORDER = [1, 16, 32, 64]     # real tuner's actual get_configs_compute_bound() order
+REVERSED_ORDER = [64, 32, 16, 1]
+
+N_TRIALS = 100   # "best-of-4" trials per order condition
+NUM_ITERS = 10   # matches tune()'s benchmark_config(..., num_iters=10) exactly
+
+
+def make_tensors():
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    A_fp32 = (torch.rand(M, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    A = A_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    B_fp32 = (torch.rand(N, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    B = B_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    n_tiles = (N + BLOCK_N - 1) // BLOCK_N
+    k_tiles = (K + BLOCK_K - 1) // BLOCK_K
+    As = torch.rand(M, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    Bs = torch.rand(n_tiles, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    return A, B, As, Bs
+
+
+def run_best_of_4(A, B, As, Bs, base_config, order):
+    """Mirrors tune()'s own inner loop exactly: strict `<` keeps the incumbent."""
+    best_g = None
+    best_time = float("inf")
+    times = {}
+    for g in order:
+        cfg = dict(base_config, GROUP_SIZE_M=g)
+        t = benchmark_config(A, B, As, Bs, [BLOCK_N, BLOCK_K], cfg, OUT_DTYPE, num_iters=NUM_ITERS)
+        times[g] = t
+        if t < best_time:
+            best_time = t
+            best_g = g
+    return best_g, times
+
+
+def main():
+    device_name = get_device_name_as_file_name()
+    json_path = (
+        f"{TUNED_DIR}/N={N},K={K},device_name={device_name},"
+        f"dtype=fp8_w8a8,block_shape=[{BLOCK_N},{BLOCK_K}].json"
+    )
+    with open(json_path) as f:
+        tuned_configs = {int(k): v for k, v in json.load(f).items()}
+    base_config = {k: v for k, v in tuned_configs[M].items() if k != "GROUP_SIZE_M"}
+    print(f"base_config (M={M}, GROUP_SIZE_M excluded) = {base_config}", flush=True)
+
+    # ONE A/B/As/Bs pair for the WHOLE script, exactly like the real tuner's
+    # own within-one-M loop -- never reallocated, never touched by another M.
+    A, B, As, Bs = make_tensors()
+    torch.accelerator.synchronize()
+    print("tensors allocated (single M, single fixed pair)", flush=True)
+
+    print("\n=== warmup (all 4 configs, JIT-compile every variant once) ===", flush=True)
+    for g in GROUP_CANDIDATES:
+        cfg = dict(base_config, GROUP_SIZE_M=g)
+        benchmark_config(A, B, As, Bs, [BLOCK_N, BLOCK_K], cfg, OUT_DTYPE, num_iters=1)
+    torch.accelerator.synchronize()
+
+    all_wins = {}
+    for label, order in [
+        ("FORWARD [1,16,32,64] (real tuner's own order)", FORWARD_ORDER),
+        ("REVERSED [64,32,16,1]", REVERSED_ORDER),
+    ]:
+        print(
+            f"\n=== {label}, {N_TRIALS} best-of-4 trials, "
+            f"num_iters={NUM_ITERS} (matches tune()'s own benchmark_config call) ===",
+            flush=True,
+        )
+        wins = {g: 0 for g in GROUP_CANDIDATES}
+        for trial in range(N_TRIALS):
+            winner, _times = run_best_of_4(A, B, As, Bs, base_config, order)
+            wins[winner] += 1
+            if (trial + 1) % 20 == 0:
+                print(f"  trial {trial + 1}/{N_TRIALS}: wins so far = {wins}", flush=True)
+        print(f"  FINAL win counts ({label}): {wins}  (expected ~{N_TRIALS / 4:.0f} each if unbiased)")
+        all_wins[label] = wins
+
+    print("\n=== Summary ===")
+    for label, wins in all_wins.items():
+        print(f"{label}: {wins}")
+    print(
+        "\nInterpretation: if GROUP_SIZE_M=1's win share flips depending on "
+        "whether it's tested first (forward) or last (reversed), that's a "
+        "first-tested-wins artifact from tune()'s strict `<` tie-break, not "
+        "a real value-specific effect. If GROUP_SIZE_M=1 wins about equally "
+        "often in both orders, the order-effect theory is wrong."
+    )
+
+
+if __name__ == "__main__":
+    main()

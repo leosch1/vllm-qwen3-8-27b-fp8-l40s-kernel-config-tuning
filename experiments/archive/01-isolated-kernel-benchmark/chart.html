@@ -1,0 +1,229 @@
+<title>Kernel-Level Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 920px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 6px; max-width: 720px; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 14px 0 4px; font-size: 12.5px; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.marker-legend { display: flex; gap: 18px; align-items: center; margin-bottom: 14px; font-size: 12px; color: var(--text-muted); }
+.marker-legend svg { display: inline-block; vertical-align: middle; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0; pointer-events: none; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+table.data { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 24px; }
+table.data caption { text-align: left; color: var(--text-secondary); font-size: 12px; margin-bottom: 6px; }
+table.data th, table.data td { border-bottom: 1px solid var(--border); padding: 4px 7px; text-align: right; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--text-secondary); font-weight: 600; }
+.neg { color: var(--s2); font-weight: 600; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 18px; }
+</style>
+
+<div class="viz-root">
+  <h1>Kernel-level speedup vs. batch size, all 5 shapes</h1>
+  <p class="sub">2000 iterations/point, isolated Job (no shared GPU traffic). Filled dots = the 18 batch sizes the tuner actually optimized for. Rings = held-out batch sizes in between, using the nearest-anchor config at that true batch size — the generalization test. Dashed line = 0% (default parity).</p>
+
+  <div class="legend" id="legend"></div>
+  <div class="marker-legend">
+    <span><svg width="14" height="14"><circle cx="7" cy="7" r="4.5" fill="var(--text-muted)"/></svg> tuned (anchor)</span>
+    <span><svg width="14" height="14"><circle cx="7" cy="7" r="4" fill="none" stroke="var(--text-muted)" stroke-width="2"/></svg> held-out (generalization)</span>
+  </div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+
+  <details>
+    <summary>Show data table</summary>
+    <table class="data" id="data-table"></table>
+  </details>
+</div>
+
+<script>
+const DATA = {"N=17408,K=5120": [[1, 73.5, "anchor"], [2, 59.4, "anchor"], [3, 52.9, "held-out"], [4, 48.2, "anchor"], [6, 42.9, "held-out"], [8, 40.9, "anchor"], [12, 37.4, "held-out"], [16, 32.9, "anchor"], [20, 12.3, "held-out"], [24, 28.2, "anchor"], [28, 28.5, "held-out"], [32, 26.7, "anchor"], [40, -4.9, "held-out"], [48, 10.6, "anchor"], [56, 12.2, "held-out"], [64, 19.8, "anchor"], [80, 1.5, "held-out"], [96, 12.6, "anchor"], [112, 7.6, "held-out"], [128, 12.5, "anchor"], [160, 0.6, "held-out"], [200, 10.7, "held-out"], [256, 11.7, "anchor"], [384, 11.7, "held-out"], [512, 14.4, "anchor"], [768, 12.4, "held-out"], [1024, 13.2, "anchor"], [1280, 13.8, "held-out"], [1536, 8.4, "anchor"], [1792, 11.4, "held-out"], [2048, 10.8, "anchor"], [2560, 8.7, "held-out"], [3072, 12.2, "anchor"], [3584, 12.5, "held-out"], [4096, 9.4, "anchor"]], "N=8192,K=5120": [[1, 63.6, "anchor"], [2, 52.4, "anchor"], [3, 46.7, "held-out"], [4, 44.1, "anchor"], [6, 41.4, "held-out"], [8, 42.5, "anchor"], [12, 40.2, "held-out"], [16, 34.5, "anchor"], [20, 28.4, "held-out"], [24, 34.2, "anchor"], [28, 34.8, "held-out"], [32, 31.2, "anchor"], [40, 16.9, "held-out"], [48, 25.2, "anchor"], [56, 28.8, "held-out"], [64, 26.6, "anchor"], [80, 0.7, "held-out"], [96, 13.9, "anchor"], [112, 15.2, "held-out"], [128, 15.0, "anchor"], [160, -7.8, "held-out"], [200, 8.3, "held-out"], [256, 10.4, "anchor"], [384, 7.9, "held-out"], [512, 11.3, "anchor"], [768, 9.0, "held-out"], [1024, 9.6, "anchor"], [1280, 8.8, "held-out"], [1536, 8.6, "anchor"], [1792, 9.0, "held-out"], [2048, 8.7, "anchor"], [2560, 10.2, "held-out"], [3072, 12.6, "anchor"], [3584, 12.9, "held-out"], [4096, 13.6, "anchor"]], "N=7168,K=5120": [[1, 59.9, "anchor"], [2, 50.4, "anchor"], [3, 45.3, "held-out"], [4, 46.4, "anchor"], [6, 40.8, "held-out"], [8, 39.9, "anchor"], [12, 42.0, "held-out"], [16, 42.2, "anchor"], [20, 28.3, "held-out"], [24, 33.9, "anchor"], [28, 37.4, "held-out"], [32, 35.9, "anchor"], [40, 21.5, "held-out"], [48, 26.2, "anchor"], [56, 28.0, "held-out"], [64, 35.9, "anchor"], [80, 2.3, "held-out"], [96, 13.2, "anchor"], [112, 15.6, "held-out"], [128, 13.5, "anchor"], [160, -10.1, "held-out"], [200, 6.1, "held-out"], [256, 8.4, "anchor"], [384, 6.6, "held-out"], [512, 9.9, "anchor"], [768, 7.4, "held-out"], [1024, 5.7, "anchor"], [1280, 11.8, "held-out"], [1536, 10.5, "anchor"], [1792, 9.5, "held-out"], [2048, 8.7, "anchor"], [2560, 13.9, "held-out"], [3072, 11.4, "anchor"], [3584, 10.2, "held-out"], [4096, 11.6, "anchor"]], "N=5120,K=8704": [[1, 62.0, "anchor"], [2, 52.3, "anchor"], [3, 55.7, "held-out"], [4, 55.0, "anchor"], [6, 53.4, "held-out"], [8, 53.8, "anchor"], [12, 52.4, "held-out"], [16, 52.3, "anchor"], [20, 38.7, "held-out"], [24, 48.3, "anchor"], [28, 47.0, "held-out"], [32, 46.2, "anchor"], [40, 31.6, "held-out"], [48, 38.5, "anchor"], [56, 39.4, "held-out"], [64, 40.3, "anchor"], [80, 17.3, "held-out"], [96, 32.4, "anchor"], [112, 11.1, "held-out"], [128, 18.8, "anchor"], [160, 18.9, "held-out"], [200, 4.4, "held-out"], [256, 9.2, "anchor"], [384, -4.6, "held-out"], [512, 9.2, "anchor"], [768, -6.0, "held-out"], [1024, 7.5, "anchor"], [1280, 11.6, "held-out"], [1536, 9.5, "anchor"], [1792, 11.4, "held-out"], [2048, 10.9, "anchor"], [2560, 10.7, "held-out"], [3072, 10.6, "anchor"], [3584, 11.4, "held-out"], [4096, 11.8, "anchor"]], "N=5120,K=3072": [[1, 49.6, "anchor"], [2, 40.5, "anchor"], [3, 36.1, "held-out"], [4, 36.2, "anchor"], [6, 34.8, "held-out"], [8, 31.2, "anchor"], [12, 31.7, "held-out"], [16, 33.9, "anchor"], [20, 24.3, "held-out"], [24, 31.0, "anchor"], [28, 29.9, "held-out"], [32, 33.8, "anchor"], [40, 22.9, "held-out"], [48, 24.0, "anchor"], [56, 25.9, "held-out"], [64, 24.5, "anchor"], [80, 9.8, "held-out"], [96, 23.0, "anchor"], [112, 5.9, "held-out"], [128, 13.4, "anchor"], [160, -3.4, "held-out"], [200, 3.4, "held-out"], [256, 3.0, "anchor"], [384, 6.7, "held-out"], [512, 12.9, "anchor"], [768, 1.2, "held-out"], [1024, 8.2, "anchor"], [1280, 2.0, "held-out"], [1536, 6.3, "anchor"], [1792, 9.7, "held-out"], [2048, 7.2, "anchor"], [2560, 7.0, "held-out"], [3072, 8.0, "anchor"], [3584, 10.4, "held-out"], [4096, 14.6, "anchor"]]};
+
+const SHAPES = Object.keys(DATA);
+const COLORS = ['var(--s1)','var(--s2)','var(--s3)','var(--s4)','var(--s5)'];
+
+const W = 880, H = 420, PAD_L = 44, PAD_R = 16, PAD_T = 12, PAD_B = 28;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = [...new Set(SHAPES.flatMap(s => DATA[s].map(p => p[0])))].sort((a,b)=>a-b);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(m) { return PAD_L + (Math.log2(m) - xMin) / (xMax - xMin) * plotW; }
+
+const allV = SHAPES.flatMap(s => DATA[s].map(p => p[1]));
+const yMax = Math.ceil(Math.max(...allV) / 20) * 20;
+const yMin = Math.floor(Math.min(...allV) / 20) * 20;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+// y gridlines
+for (let v = yMin; v <= yMax; v += 20) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+// x ticks at powers of 2 present in data range
+[1,2,4,8,16,32,64,128,256,512,1024,2048,4096].forEach(m => {
+  if (m < Math.min(...allM) || m > Math.max(...allM)) return;
+  const x = xPos(m);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 8);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = m;
+  svg.appendChild(t);
+});
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SHAPES.forEach((shape, si) => {
+  const color = COLORS[si];
+  const pts = DATA[shape];
+  let d = '';
+  pts.forEach((p, i) => {
+    const x = xPos(p[0]), y = yPos(p[1]);
+    d += (i === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+  });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  pts.forEach(([m, spd, type]) => {
+    const x = xPos(m), y = yPos(spd);
+    const c = document.createElementNS(svgNS, 'circle');
+    c.setAttribute('cx', x); c.setAttribute('cy', y);
+    c.setAttribute('data-shape', shape); c.setAttribute('data-m', m);
+    c.setAttribute('data-spd', spd); c.setAttribute('data-type', type);
+    c.setAttribute('data-color', color);
+    if (type === 'anchor') {
+      c.setAttribute('r', 4);
+      c.setAttribute('fill', color);
+    } else {
+      c.setAttribute('r', 3.5);
+      c.setAttribute('fill', 'var(--surface-1)');
+      c.setAttribute('stroke', color);
+      c.setAttribute('stroke-width', '1.75');
+    }
+    c.style.cursor = 'pointer';
+    c.addEventListener('mouseenter', (e) => {
+      const rect = svg.getBoundingClientRect();
+      tooltip.innerHTML = `
+        <div class="row"><span class="k" style="color:${color}">${shape}</span></div>
+        <div class="row"><span class="k">M</span><b>${m}</b></div>
+        <div class="row"><span class="k">${type}</span><b>${spd > 0 ? '+' : ''}${spd.toFixed(1)}%</b></div>
+      `;
+      tooltip.style.opacity = 1;
+    });
+    c.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    c.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+    svg.appendChild(c);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+
+// legend
+const legendEl = document.getElementById('legend');
+SHAPES.forEach((shape, si) => {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  item.innerHTML = `<span class="swatch" style="background:${COLORS[si]}"></span>${shape}`;
+  legendEl.appendChild(item);
+});
+
+// data table
+const table = document.getElementById('data-table');
+let thead = '<thead><tr><th>M</th><th>type</th>';
+SHAPES.forEach(s => thead += `<th>${s}</th>`);
+thead += '</tr></thead>';
+const byM = {};
+SHAPES.forEach(shape => DATA[shape].forEach(([m, spd, type]) => {
+  byM[m] = byM[m] || {};
+  byM[m][shape] = [spd, type];
+}));
+let tbody = '<tbody>';
+Object.keys(byM).map(Number).sort((a,b)=>a-b).forEach(m => {
+  const anyType = Object.values(byM[m])[0][1];
+  tbody += `<tr><td>${m}</td><td>${anyType}</td>`;
+  SHAPES.forEach(s => {
+    const cell = byM[m][s];
+    if (!cell) { tbody += '<td>—</td>'; return; }
+    const [spd] = cell;
+    tbody += `<td class="${spd < 0 ? 'neg' : ''}">${spd > 0 ? '+' : ''}${spd.toFixed(1)}%</td>`;
+  });
+  tbody += '</tr>';
+});
+tbody += '</tbody>';
+table.innerHTML = thead + tbody;
+</script>

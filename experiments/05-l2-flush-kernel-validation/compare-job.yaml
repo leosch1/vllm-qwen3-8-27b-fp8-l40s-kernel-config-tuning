@@ -1,0 +1,64 @@
+# Reproduces results/kernel-level-speedup.json: clones this repo, then
+# runs compare_default_vs_l2flush_l2flushed.py against the committed
+# tuned-configs/, both configs timed under a direct L2 flush before every
+# launch.
+#
+# Usage: kubectl apply -f compare-job.yaml
+#   kubectl logs -f job/qwen3-8-27b-fp8-l2flush-kernel-validate
+#   kubectl delete -f compare-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-fp8-l2flush-kernel-validate
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      initContainers:
+        - name: clone-repo
+          image: docker.io/alpine/git:latest
+          args:
+            - clone
+            - --depth=1
+            - https://github.com/leosch1/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning.git
+            - /repo
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+      containers:
+        - name: compare
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          workingDir: /repo/experiments/05-l2-flush-kernel-validation
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              python3 compare_default_vs_l2flush_l2flushed.py
+              echo "=== done, sleeping so logs can be read ==="
+              sleep infinity
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "6"
+              memory: 28Gi
+              nvidia.com/gpu: "1"
+      volumes:
+        - name: repo
+          emptyDir: {}

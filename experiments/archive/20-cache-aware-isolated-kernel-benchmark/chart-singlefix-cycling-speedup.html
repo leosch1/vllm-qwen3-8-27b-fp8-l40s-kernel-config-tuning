@@ -1,0 +1,187 @@
+<title>Singlefix Config, Cycling Kernel Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, singlefix (22) vs. default, under cache-cycling pressure</h1>
+  <p class="sub">Same 175-point grid and cache-cycling methodology as this experiment's other charts &mdash; this time for <a href="../23-m2048-singlefix/README.md">22</a>'s maximally narrow config: byte-identical to the original tuned config everywhere except <code>gate_up_proj</code>'s single M=2048 entry, where <code>GROUP_SIZE_M</code> changes from 1 to 16.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Since singlefix is byte-identical to tuned everywhere except one anchor, this curve should track <a href="./chart-tuned-cycling-speedup.html">tuned's own cycling curve</a> almost exactly, with a visible bump only right at the changed anchor. Confirmed directly: at every other large-M <code>gate_up_proj</code> point (512/1024/1536/3072/4096), singlefix's speedup vs. default matches tuned's within &plusmn;1.5pp (noise, as expected for an identical config) &mdash; except at M=2048 itself, where singlefix jumps to +8.9% vs. tuned's +5.8% (+3.1pp, the largest positive delta of any point), and the neighboring held-out M=2560 (nearest anchor 2048, so it inherits the same changed config) also rises (+9.1% vs. tuned's +8.1%). The effect is exactly as localized as the config change that causes it.</p>
+</div>
+
+<script>
+const DATA = {
+  "gate_up_proj": [[1,18.2],[2,4.5],[3,1.8],[4,0.1],[6,2.5],[8,2.0],[12,2.0],[16,3.3],[20,0.5],[24,2.5],[28,1.0],[32,-2.3],[40,-17.1],[48,-2.4],[56,1.0],[64,2.0],[80,-4.7],[96,-0.3],[112,-3.6],[128,-0.3],[160,4.5],[200,9.5],[256,5.9],[384,9.5],[512,-4.2],[768,0.6],[1024,5.4],[1280,5.2],[1536,7.7],[1792,6.7],[2048,8.9],[2560,9.1],[3072,9.3],[3584,8.9],[4096,9.1]],
+  "in_proj_qkvz": [[1,20.1],[2,6.5],[3,10.2],[4,1.9],[6,7.7],[8,5.2],[12,6.6],[16,8.3],[20,5.7],[24,7.6],[28,8.9],[32,-0.9],[40,7.9],[48,4.6],[56,5.9],[64,5.8],[80,-12.2],[96,-1.1],[112,5.0],[128,4.5],[160,-12.0],[200,8.9],[256,0.6],[384,3.8],[512,13.0],[768,7.4],[1024,7.5],[1280,7.4],[1536,7.7],[1792,8.1],[2048,5.8],[2560,11.0],[3072,12.8],[3584,12.9],[4096,13.0]],
+  "qkv_proj": [[1,17.1],[2,11.4],[3,6.5],[4,16.8],[6,8.0],[8,10.2],[12,9.6],[16,10.7],[20,7.5],[24,10.4],[28,8.8],[32,6.8],[40,3.7],[48,7.6],[56,8.9],[64,6.1],[80,6.9],[96,4.6],[112,6.3],[128,-1.4],[160,-17.1],[200,6.9],[256,12.3],[384,3.6],[512,7.1],[768,6.8],[1024,4.5],[1280,10.7],[1536,8.6],[1792,9.0],[2048,8.8],[2560,14.5],[3072,9.8],[3584,9.7],[4096,12.5]],
+  "down_proj": [[1,24.2],[2,10.4],[3,16.0],[4,16.1],[6,18.3],[8,17.2],[12,16.0],[16,14.4],[20,14.3],[24,14.4],[28,13.8],[32,15.8],[40,15.8],[48,13.4],[56,13.6],[64,16.7],[80,15.4],[96,9.7],[112,12.8],[128,11.9],[160,2.8],[200,1.2],[256,2.6],[384,-5.5],[512,9.7],[768,-7.4],[1024,7.9],[1280,11.2],[1536,7.6],[1792,10.6],[2048,7.2],[2560,10.7],[3072,12.6],[3584,13.1],[4096,11.5]],
+  "out_proj": [[1,28.8],[2,9.9],[3,8.6],[4,12.1],[6,11.4],[8,5.4],[12,10.2],[16,9.1],[20,8.7],[24,8.6],[28,12.1],[32,7.9],[40,10.1],[48,11.1],[56,9.7],[64,9.8],[80,7.2],[96,3.2],[112,4.7],[128,-0.6],[160,1.2],[200,15.6],[256,8.9],[384,4.6],[512,7.5],[768,2.8],[1024,6.6],[1280,-2.0],[1536,7.3],[1792,9.8],[2048,6.4],[2560,6.5],[3072,13.1],[3584,11.6],[4096,6.0]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SHAPES.forEach(([name, color]) => {
+  const data = DATA[name];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

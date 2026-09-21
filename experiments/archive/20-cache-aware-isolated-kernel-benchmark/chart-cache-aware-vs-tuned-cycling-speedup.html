@@ -1,0 +1,187 @@
+<title>Cache-Aware Config vs. Tuned, Cycling Kernel Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, cache-aware config vs. original tuned, under cache-cycling pressure</h1>
+  <p class="sub">Same 175-point grid and cache-cycling methodology as this experiment's other charts, but comparing against a different baseline: the <em>original, unpatched tuned config</em> instead of <code>default</code>. Computed directly from the same absolute-microsecond numbers already logged for <a href="./chart-cache-cycling-speedup.html">cache-aware vs. default</a> and <a href="./chart-tuned-cycling-speedup.html">tuned vs. default</a> (both cycling runs share the identical 64-B-copy design, M grid, and hardware, so their raw durations are directly comparable without re-running anything).</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="chart-wrap" id="chart-wrap"></div>
+  <p class="note">Answers a narrower question than the default-relative charts: does the cache-aware config's real retuning (not just GROUP_SIZE_M) actually beat the config it's replacing, kernel-for-kernel? Mostly yes, especially at large M on <code>gate_up_proj</code> (M=512: +13.6%, M=1024: +4.9%, M=2048: +5.2%) &mdash; the same anchors where the original tuned config's GROUP_SIZE_M=1 is worst. 28/175 points still negative (worst -10.7%, out_proj M=80), consistent with this being a full independent retune rather than a single-parameter patch, so it trades off differently at some M values even as it wins where it matters most.</p>
+</div>
+
+<script>
+const DATA = {
+  "gate_up_proj": [[1,2.6],[2,5.4],[3,4.7],[4,4.4],[6,3.3],[8,4.6],[12,4.7],[16,8.1],[20,4.4],[24,-1.2],[28,-0.7],[32,1.7],[40,16.7],[48,3.9],[56,2.6],[64,2.8],[80,-0.3],[96,1.7],[112,-1.9],[128,5.5],[160,-3.6],[200,0.4],[256,-0.3],[384,-0.7],[512,13.6],[768,8.0],[1024,4.9],[1280,4.6],[1536,0.8],[1792,1.4],[2048,5.2],[2560,0.7],[3072,-0.9],[3584,-2.1],[4096,-0.3]],
+  "in_proj_qkvz": [[1,3.7],[2,1.4],[3,-0.8],[4,3.0],[6,-0.5],[8,2.4],[12,3.9],[16,2.7],[20,5.3],[24,3.3],[28,2.3],[32,1.2],[40,1.2],[48,3.7],[56,4.0],[64,2.7],[80,12.9],[96,6.0],[112,3.9],[128,4.5],[160,-7.3],[200,-0.6],[256,-1.4],[384,-1.9],[512,5.2],[768,2.2],[1024,-0.1],[1280,1.0],[1536,1.3],[1792,1.2],[2048,4.8],[2560,1.2],[3072,0.3],[3584,0.9],[4096,1.1]],
+  "qkv_proj": [[1,4.2],[2,6.8],[3,2.1],[4,0.6],[6,1.9],[8,-1.0],[12,3.1],[16,0.7],[20,1.0],[24,3.4],[28,2.6],[32,2.8],[40,1.4],[48,3.0],[56,3.2],[64,3.1],[80,0.9],[96,6.1],[112,5.0],[128,7.9],[160,17.9],[200,4.1],[256,3.1],[384,2.1],[512,6.8],[768,-0.9],[1024,2.0],[1280,0.6],[1536,1.7],[1792,1.6],[2048,3.7],[2560,2.4],[3072,2.5],[3584,2.7],[4096,1.3]],
+  "down_proj": [[1,2.4],[2,7.4],[3,7.3],[4,4.6],[6,4.1],[8,9.3],[12,6.9],[16,6.4],[20,4.7],[24,4.9],[28,3.2],[32,1.5],[40,-2.2],[48,4.5],[56,4.7],[64,6.9],[80,4.7],[96,4.6],[112,1.3],[128,6.7],[160,-8.0],[200,14.0],[256,13.8],[384,18.2],[512,-10.0],[768,1.8],[1024,0.9],[1280,1.6],[1536,0.9],[1792,1.0],[2048,2.6],[2560,2.3],[3072,1.9],[3584,1.8],[4096,2.1]],
+  "out_proj": [[1,0.9],[2,6.0],[3,3.9],[4,5.9],[6,7.6],[8,7.8],[12,5.3],[16,2.4],[20,2.9],[24,1.0],[28,1.2],[32,0.6],[40,3.1],[48,5.5],[56,3.5],[64,2.7],[80,-10.7],[96,5.8],[112,1.5],[128,5.3],[160,13.0],[200,2.2],[256,2.2],[384,2.0],[512,-7.9],[768,-3.3],[1024,2.6],[1280,-0.8],[1536,4.3],[1792,3.6],[2048,3.9],[2560,2.5],[3072,-0.3],[3584,-0.7],[4096,1.2]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 360, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+const allVals = Object.values(DATA).flat().map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(svgNS, 'svg');
+svg.setAttribute('class', 'chart');
+svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+for (let v = yMin; v <= yMax; v += 5) {
+  const y = yPos(v);
+  const gl = document.createElementNS(svgNS, 'line');
+  gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+  gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+  gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+  svg.appendChild(gl);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+  t.setAttribute('text-anchor', 'end');
+  t.textContent = v + '%';
+  svg.appendChild(t);
+}
+[1,4,16,64,256,1024,4096].forEach(c => {
+  const x = xPos(c);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'axis-text');
+  t.setAttribute('x', x); t.setAttribute('y', H - 10);
+  t.setAttribute('text-anchor', 'middle');
+  t.textContent = c;
+  svg.appendChild(t);
+});
+const xlab = document.createElementNS(svgNS, 'text');
+xlab.setAttribute('class', 'axis-text');
+xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+xlab.setAttribute('text-anchor', 'middle');
+xlab.textContent = 'M (batch size)';
+svg.appendChild(xlab);
+
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+SHAPES.forEach(([name, color]) => {
+  const data = DATA[name];
+  let d = '';
+  data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', color);
+  path.setAttribute('stroke-width', 2);
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  path.setAttribute('opacity', '0.9');
+  svg.appendChild(path);
+
+  data.forEach(([m,v]) => {
+    const x = xPos(m), y = yPos(v);
+    const circ = document.createElementNS(svgNS, 'circle');
+    circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+    circ.setAttribute('r', 3.5);
+    circ.setAttribute('fill', color);
+    circ.style.cursor = 'pointer';
+    circ.addEventListener('mouseenter', () => {
+      tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup vs. tuned</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    circ.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(circ);
+  });
+});
+
+document.getElementById('chart-wrap').appendChild(svg);
+</script>

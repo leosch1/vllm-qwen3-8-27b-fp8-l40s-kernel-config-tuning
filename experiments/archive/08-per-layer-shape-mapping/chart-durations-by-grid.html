@@ -1,0 +1,191 @@
+<title>GPU-Metrics Capture: GEMM Launch Durations</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 960px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 760px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 30px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; max-width: 760px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 10px; font-size: 12.5px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.swatch.sq { width: 10px; height: 10px; border-radius: 2px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.axis-text-strong { fill: var(--text-secondary); font-size: 10.5px; font-weight: 600; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.callout {
+  border-left: 3px solid var(--s2); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout b { color: var(--text-primary); }
+</style>
+
+<div class="viz-root">
+  <h1>GEMM launch durations &mdash; GPU-metrics captures (150-prompt, c=64)</h1>
+  <p class="sub">Every real captured <code>_w8a8_triton_block_scaled_mm</code> launch's individual duration, from the shortened (150-prompt) default-vs-tuned capture pair taken alongside the GPU-metrics (clock/utilization) telemetry &mdash; <code>pr-evidence-serving/profiling-results/pass1-default-concurrency64-gpumetrics-1khz-short/</code> and <code>pass2-tuned-concurrency64-gpumetrics-1khz-short/</code>. Each duration bin is split into independently-hoverable raw CUDA launch-grid shapes, with default on the left and tuned on the right. The trace preserves launch grid dimensions, rather than the GEMM input N/K arguments. Dashed lines mark each series' median; solid lines mark its mean.</p>
+
+  <div class="legend" id="legend-dist"></div>
+  <div class="chart-wrap" id="chart-dist"></div>
+  <div class="callout">Launch counts are <b>identical</b> between configs (201,216 each) &mdash; same real work, same shapes. Medians move the expected direction (tuned 77.4&micro;s vs. default 86.0&micro;s, tuned faster). But default's distribution tops out at <b>1201.7&micro;s</b>, while tuned's tail reaches all the way to <b>2131.9&micro;s</b> &mdash; the same &ge;2000&micro;s slow cluster this whole GPU-metrics investigation is chasing, visibly absent from default and visibly present in tuned. Means end up almost dead even (130.4&micro;s vs. 130.5&micro;s) purely because that one extra tail cancels out tuned's otherwise-faster bulk.</div>
+</div>
+
+<script>
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+function bindTooltip(el, htmlFn) {
+  el.addEventListener('mouseenter', () => { tooltip.innerHTML = htmlFn(); tooltip.style.opacity = 1; });
+  el.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+}
+
+document.getElementById('legend-dist').innerHTML = `
+  <div class="legend-item"><span class="swatch sq" style="background:var(--s1)"></span>default (left half of each bin)</div>
+  <div class="legend-item"><span class="swatch sq" style="background:var(--s2)"></span>tuned (right half of each bin)</div>
+  <div class="legend-item">segment color identifies the raw launch grid; hover for the exact shape</div>
+`;
+
+function niceLogTicks(lo, hi) {
+  const candidates = [10,20,30,50,75,100,150,200,300,500,750,1000,1500,2000,3000,5000];
+  return candidates.filter(v => v >= lo && v <= hi);
+}
+
+const DIST_DATA = {"bins": [24.2, 25.0, 25.7, 26.5, 27.3, 28.2, 29.0, 29.9, 30.8, 31.7, 32.7, 33.7, 34.7, 35.8, 36.9, 38.0, 39.2, 40.4, 41.6, 42.9, 44.2, 45.5, 46.9, 48.4, 49.8, 51.3, 52.9, 54.5, 56.2, 57.9, 59.7, 61.5, 63.4, 65.3, 67.3, 69.3, 71.5, 73.6, 75.9, 78.2, 80.6, 83.0, 85.6, 88.2, 90.9, 93.7, 96.5, 99.5, 102.5, 105.6, 108.8, 112.2, 115.6, 119.1, 122.7, 126.5, 130.3, 134.3, 138.4, 142.6, 147.0, 151.5, 156.1, 160.9, 165.8, 170.8, 176.0, 181.4, 186.9, 192.6, 198.5, 204.6, 210.8, 217.2, 223.9, 230.7, 237.7, 245.0, 252.5, 260.2, 268.1, 276.3, 284.7, 293.4, 302.3, 311.6, 321.1, 330.9, 340.9, 351.3, 362.1, 373.1, 384.5, 396.2, 408.3, 420.8, 433.6, 446.8, 460.5, 474.5, 489.0, 503.9, 519.3, 535.1, 551.4, 568.2, 585.6, 603.4, 621.9, 640.8, 660.4, 680.5, 701.3, 722.7, 744.7, 767.4, 790.8, 815.0, 839.8, 865.5, 891.9, 919.1, 947.1, 976.0, 1005.8, 1036.4, 1068.1, 1100.6, 1134.2, 1168.8, 1204.5, 1241.2, 1279.1, 1318.1, 1358.3, 1399.8, 1442.5, 1486.5, 1531.8, 1578.5, 1626.7, 1676.3, 1727.4, 1780.1, 1834.4, 1890.4, 1948.1, 2007.5, 2068.7, 2131.9], "default_pct": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.014, 2.584, 2.439, 1.208, 0.573, 1.875, 1.475, 0.969, 0.466, 0.028, 0.052, 0.052, 0.057, 0.21, 0.591, 0.995, 1.674, 2.011, 2.226, 1.955, 1.434, 0.456, 0.065, 0.001, 0.003, 0.314, 0.682, 0.224, 2.584, 3.856, 4.004, 3.293, 4.89, 2.099, 1.003, 2.401, 3.421, 0.269, 0.064, 0.013, 0.016, 0.094, 0.09, 0.704, 1.648, 2.106, 1.789, 1.633, 7.957, 1.639, 0.046, 0.024, 1.109, 4.746, 0.072, 0.08, 0.038, 0.056, 1.257, 4.482, 4.052, 7.308, 0.226, 0.0, 0.003, 0.102, 0.302, 0.451, 0.539, 0.093, 0.023, 0.025, 0.011, 0.009, 0.008, 0.072, 0.05, 0.072, 0.021, 0.0, 0.0, 0.014, 0.118, 0.011, 0.012, 0.028, 0.044, 0.027, 0.0, 0.0, 0.004, 0.095, 0.027, 0.003, 0.251, 0.02, 0.186, 0.001, 0.269, 1.349, 0.529, 0.046, 0.082, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.003, 0.057, 0.003, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.254, 0.091, 0.99, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "tuned_pct": [1.533, 1.556, 2.768, 1.204, 2.062, 1.372, 0.9, 0.264, 0.021, 0.015, 0.036, 0.992, 8.745, 1.823, 0.08, 0.041, 0.008, 0.011, 0.012, 0.015, 0.013, 0.002, 0.001, 0.0, 0.0, 0.0, 0.008, 0.043, 0.823, 0.918, 0.318, 2.477, 2.686, 4.942, 7.185, 2.099, 0.909, 1.293, 4.32, 1.013, 0.182, 0.645, 2.445, 2.6, 5.542, 5.987, 0.002, 0.0, 0.0, 0.0, 0.012, 0.038, 0.012, 0.0, 0.002, 0.062, 0.195, 0.249, 3.055, 2.774, 0.111, 0.057, 0.082, 1.567, 4.216, 0.544, 6.84, 4.092, 0.196, 0.389, 0.529, 0.179, 0.007, 0.042, 0.052, 0.081, 0.041, 0.048, 0.013, 0.05, 0.04, 0.01, 0.001, 0.0, 0.063, 0.058, 0.037, 0.049, 0.027, 0.004, 0.0, 0.0, 0.034, 0.047, 0.03, 0.03, 0.07, 0.269, 0.124, 0.0, 0.007, 0.412, 1.71, 0.002, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.005, 0.033, 0.025, 0.0, 0.0, 0.0, 0.0, 0.008, 0.034, 0.021, 0.002, 0.012, 0.046, 0.003, 0.0, 0.0, 0.0, 0.0, 0.004, 0.011, 0.048, 0.019, 0.079, 0.165, 0.485, 0.524], "default_n": 201216, "tuned_n": 201216, "default_median": 86.0, "tuned_median": 77.4, "default_mean": 130.4, "tuned_mean": 130.5, "default_max": 1201.7, "tuned_max": 2131.9};
+
+// [bin index, raw-launch-grid index, launch count], split by default then tuned.
+const LAUNCH_GRID_BINS = {"shapes":["grid=1024x1x1","grid=1176x1x1","grid=1200x1x1","grid=1280x1x1","grid=1344x1x1","grid=136x1x1","grid=1496x1x1","grid=1680x1x1","grid=1792x1x1","grid=1920x1x1","grid=200x1x1","grid=2048x1x1","grid=2176x1x1","grid=240x1x1","grid=280x1x1","grid=2856x1x1","grid=320x1x1","grid=336x1x1","grid=384x1x1","grid=4080x1x1","grid=40x1x1","grid=4352x1x1","grid=440x1x1","grid=56x1x1","grid=616x1x1","grid=640x1x1","grid=64x1x1","grid=680x1x1","grid=704x1x1","grid=816x1x1","grid=840x1x1","grid=896x1x1","grid=1088x1x1","grid=112x1x1","grid=128x1x1","grid=1360x1x1","grid=160x1x1","grid=168x1x1","grid=1904x1x1","grid=192x1x1","grid=2040x1x1","grid=224x1x1","grid=256x1x1","grid=272x1x1","grid=400x1x1","grid=408x1x1","grid=448x1x1","grid=512x1x1","grid=560x1x1","grid=600x1x1","grid=784x1x1","grid=800x1x1","grid=80x1x1","grid=960x1x1"],"series":[[[82,0,8],[83,0,140],[84,0,44],[87,1,2],[88,1,15],[89,1,15],[70,2,6],[71,2,95],[72,2,146],[73,2,249],[74,2,16],[104,2,4],[105,2,504],[106,2,4],[70,3,1],[71,3,100],[72,3,424],[73,3,623],[74,3,902],[75,3,126],[105,3,1117],[106,3,1059],[90,4,24],[91,4,56],[92,4,16],[58,5,2042],[59,5,9542],[60,5,72],[61,5,83],[62,5,9],[63,5,113],[64,5,2527],[65,5,9012],[66,5,8160],[67,5,14696],[68,5,463],[69,5,1],[96,6,7],[97,6,66],[98,6,55],[96,7,2],[97,7,126],[99,8,6],[100,8,505],[101,8,33],[101,9,8],[102,9,374],[103,9,2],[12,10,2],[13,10,8],[14,10,14],[15,10,6],[16,10,5],[17,10,21],[18,10,56],[19,10,13],[23,10,2],[24,10,1],[48,10,11],[49,10,26],[50,10,22],[51,10,23],[52,10,29],[53,10,14],[54,10,2],[55,10,1],[104,11,530],[105,11,1101],[106,11,1],[107,12,93],[108,12,163],[14,13,1],[15,13,16],[16,13,81],[17,13,40],[18,13,29],[19,13,10],[20,13,10],[21,13,11],[22,13,16],[23,13,20],[24,13,11],[25,13,8],[26,13,3],[53,13,1],[54,13,44],[55,13,132],[56,13,68],[57,13,11],[42,14,2],[43,14,2],[44,14,6],[45,14,3],[46,14,3],[47,14,5],[48,14,7],[49,14,3],[50,14,1],[115,15,7],[116,15,114],[117,15,7],[55,16,5],[56,16,6],[57,16,8],[58,16,12],[59,16,16],[60,16,23],[61,16,20],[62,16,6],[54,17,3],[55,17,3],[56,17,7],[57,17,7],[58,17,5],[59,17,6],[60,17,7],[61,17,16],[62,17,9],[63,17,1],[56,18,2],[57,18,9],[58,18,34],[59,18,28],[60,18,29],[61,18,39],[62,18,50],[63,18,1],[127,19,511],[128,19,1],[6,20,29],[7,20,5199],[8,20,4625],[9,20,2694],[10,20,1171],[11,20,3613],[12,20,3125],[13,20,1985],[14,20,876],[15,20,37],[16,20,22],[17,20,40],[18,20,38],[19,20,403],[20,20,1138],[21,20,1952],[22,20,3580],[23,20,3777],[24,20,4465],[25,20,4018],[26,20,2882],[27,20,928],[28,20,121],[29,20,2],[41,20,4804],[42,20,6839],[43,20,46],[44,20,38],[45,20,17],[46,20,34],[47,20,173],[48,20,154],[49,20,1349],[50,20,3416],[51,20,4190],[52,20,3516],[53,20,3212],[54,20,15984],[55,20,2947],[56,20,1],[128,21,182],[129,21,1994],[37,22,1],[38,22,8],[39,22,12],[40,22,23],[41,22,20],[42,22,24],[43,22,30],[44,22,10],[73,22,6],[74,22,106],[75,22,16],[30,23,7],[31,23,661],[32,23,1343],[33,23,502],[34,23,4005],[35,23,2435],[36,23,1863],[37,23,828],[38,23,5],[39,23,22],[40,23,9],[71,24,10],[72,24,8],[73,24,13],[74,24,1],[52,25,2],[53,25,25],[54,25,123],[55,25,97],[56,25,9],[87,25,27],[88,25,222],[89,25,7],[34,26,1029],[35,26,5523],[36,26,5798],[37,26,6106],[38,26,9827],[39,26,4189],[40,26,1987],[41,26,8],[42,26,22],[43,26,468],[44,26,67],[45,26,6],[46,26,2],[47,26,8],[73,27,3],[74,27,16],[75,27,35],[76,27,34],[77,27,33],[78,27,7],[72,28,21],[73,28,28],[74,28,42],[75,28,5],[76,29,12],[77,29,17],[78,29,15],[79,29,19],[80,29,17],[81,29,96],[82,29,76],[83,29,4],[57,30,13],[58,30,52],[59,30,45],[60,30,15],[61,30,3],[91,30,1],[92,30,72],[93,30,55],[81,31,48],[82,31,16]],[[100,0,14],[101,0,615],[102,0,1098],[103,0,1],[122,32,1],[123,32,10],[124,32,66],[125,32,51],[26,33,17],[27,33,74],[28,33,1636],[29,33,1865],[30,33,622],[31,33,350],[32,33,322],[33,33,1502],[34,33,3895],[35,33,1362],[36,33,3],[31,34,4646],[32,34,4792],[33,34,8516],[34,34,840],[35,34,703],[36,34,1691],[37,34,2619],[38,34,8653],[39,34,1970],[40,34,312],[41,34,3],[42,34,7],[130,35,17],[131,35,69],[132,35,42],[57,5,58],[58,5,5944],[59,5,5572],[60,5,10],[61,5,12],[62,5,115],[63,5,3199],[64,5,8309],[65,5,1043],[66,5,13793],[67,5,8223],[68,5,58],[133,6,4],[134,6,25],[135,6,92],[136,6,7],[0,36,2],[1,36,14],[2,36,15],[3,36,1],[7,36,3],[8,36,6],[9,36,11],[10,36,14],[11,36,33],[12,36,29],[32,36,5],[33,36,27],[35,36,2],[36,36,19],[37,36,25],[38,36,39],[39,36,10],[40,36,1],[55,37,8],[56,37,24],[57,37,18],[58,37,15],[59,37,23],[60,37,34],[61,37,6],[141,38,8],[142,38,24],[143,38,90],[144,38,6],[54,39,1],[55,39,49],[56,39,67],[57,39,45],[58,39,47],[59,39,78],[60,39,92],[61,39,5],[10,10,17],[11,10,96],[12,10,10],[13,10,3],[17,10,2],[143,40,6],[144,40,33],[145,40,133],[146,40,84],[145,12,26],[146,12,249],[147,12,973],[148,12,1056],[27,41,13],[28,41,19],[12,13,24],[13,13,95],[14,13,58],[15,13,84],[16,13,17],[17,13,19],[18,13,25],[19,13,30],[20,13,25],[21,13,5],[22,13,2],[55,13,15],[56,13,258],[57,13,225],[58,13,14],[32,42,88],[33,42,6],[39,42,2],[57,43,125],[58,43,33],[59,43,2],[60,43,69],[61,43,25],[62,43,1],[63,43,31],[67,43,2],[74,43,1],[75,43,3],[76,43,9],[77,43,13],[78,43,12],[79,43,24],[80,43,22],[81,43,9],[82,43,3],[84,16,125],[85,16,3],[84,44,2],[85,44,104],[86,44,22],[72,45,7],[73,45,87],[74,45,102],[75,45,158],[76,45,74],[77,45,84],[59,22,1],[60,22,22],[61,22,64],[62,22,33],[63,22,8],[93,22,68],[94,22,60],[78,46,13],[79,46,19],[78,47,1],[79,47,52],[80,47,43],[62,48,22],[63,48,34],[64,48,50],[65,48,22],[79,48,6],[80,48,15],[81,48,11],[95,48,61],[96,48,67],[68,49,52],[69,49,150],[70,49,54],[101,49,90],[102,49,166],[85,24,10],[86,24,20],[87,24,2],[50,25,27],[51,25,76],[52,25,25],[67,25,6],[68,25,283],[69,25,637],[70,25,1016],[71,25,355],[72,25,7],[86,25,33],[87,25,58],[88,25,5],[101,25,140],[102,25,2161],[103,25,3],[31,26,71],[32,26,115],[33,26,4],[34,26,2],[86,28,1],[87,28,37],[88,28,49],[89,28,9],[92,50,32],[54,51,3],[55,51,47],[56,51,43],[57,51,25],[58,51,9],[59,51,1],[0,52,3206],[1,52,2993],[2,52,5555],[3,52,2421],[4,52,4481],[5,52,2428],[6,52,1810],[7,52,528],[8,52,35],[9,52,20],[10,52,42],[11,52,1645],[12,52,17756],[13,52,3586],[14,52,86],[33,52,55],[34,52,9204],[35,52,2522],[36,52,40],[37,52,18],[38,52,1],[39,52,56],[40,52,54],[41,52,1295],[42,52,4990],[43,52,5192],[44,52,11962],[45,52,11199],[46,52,4],[92,30,37],[93,30,27],[96,31,68],[97,31,531],[98,31,73],[96,53,3],[97,53,12],[98,53,176],[99,53,1]]]};
+
+function renderDistChart(d, containerId) {
+  const W = 880, H = 260, PAD_L = 48, PAD_R = 16, PAD_T = 14, PAD_B = 26;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const bins = d.bins;
+  const logLo = Math.log10(bins[0]), logHi = Math.log10(bins[bins.length-1]);
+  const xPos = v => PAD_L + (Math.log10(v) - logLo) / (logHi - logLo) * plotW;
+
+  const maxPct = Math.max(...d.default_pct, ...d.tuned_pct) * 1.08;
+  const yPos = v => PAD_T + plotH - (v / maxPct) * plotH;
+
+  [0, maxPct*0.25, maxPct*0.5, maxPct*0.75, maxPct].forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toFixed(1) + '%'; svg.appendChild(t);
+  });
+
+  niceLogTicks(bins[0], bins[bins.length-1]).forEach(v => {
+    const x = xPos(v);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 8); t.setAttribute('text-anchor', 'middle');
+    t.textContent = v >= 1000 ? (v/1000)+'ms' : v+'µs'; svg.appendChild(t);
+  });
+
+  const shapeColor = idx => `hsl(${(idx * 47 + 12) % 360} 58% 46%)`;
+  const entriesByBin = LAUNCH_GRID_BINS.series.map(series => {
+    const byBin = Array.from({ length: bins.length - 1 }, () => []);
+    series.forEach(([bin, shape, count]) => byBin[bin].push([shape, count]));
+    return byBin;
+  });
+
+  function drawSeries(seriesIndex, config, pctArr, n) {
+    for (let i = 0; i < bins.length - 1; i++) {
+      const entries = entriesByBin[seriesIndex][i];
+      if (!entries.length) continue;
+      const x0 = xPos(bins[i]), x1 = xPos(bins[i+1]);
+      const gap = 0.35, width = Math.max(0.35, (x1 - x0 - gap) / 2);
+      const x = x0 + seriesIndex * (width + gap);
+      const binCount = entries.reduce((sum, [, count]) => sum + count, 0);
+      let stackedPct = 0;
+      entries.forEach(([shapeIndex, count]) => {
+        const pct = pctArr[i] * count / binCount;
+        const top = yPos(stackedPct + pct), bottom = yPos(stackedPct);
+        const rect = document.createElementNS(svgNS, 'rect');
+        rect.setAttribute('x', x); rect.setAttribute('y', top);
+        rect.setAttribute('width', width); rect.setAttribute('height', Math.max(0.25, bottom - top));
+        rect.setAttribute('fill', shapeColor(shapeIndex)); rect.setAttribute('stroke', 'var(--surface-1)');
+        rect.setAttribute('stroke-width', '0.2'); rect.style.cursor = 'pointer';
+        bindTooltip(rect, () => `<div class="row"><span class="k">config</span><b>${config}</b></div><div class="row"><span class="k">range</span><b>${bins[i].toFixed(0)}&ndash;${bins[i+1].toFixed(0)}µs</b></div><div class="row"><span class="k">launch grid</span><b>${LAUNCH_GRID_BINS.shapes[shapeIndex]}</b></div><div class="row"><span class="k">share</span><b>${pct.toFixed(2)}%</b></div><div class="row"><span class="k">launches</span><b>${count.toLocaleString()}</b></div>`);
+        svg.appendChild(rect);
+        stackedPct += pct;
+      });
+    }
+  }
+  drawSeries(0, 'default', d.default_pct, d.default_n);
+  drawSeries(1, 'tuned', d.tuned_pct, d.tuned_n);
+
+  function vline(v, color, dash, labelText) {
+    const x = xPos(v);
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x); l.setAttribute('x2', x); l.setAttribute('y1', PAD_T); l.setAttribute('y2', PAD_T + plotH);
+    l.setAttribute('stroke', color); l.setAttribute('stroke-width', '1.5');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(l);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', PAD_T + 9); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', color); t.textContent = labelText;
+    svg.appendChild(t);
+  }
+  vline(d.default_median, 'var(--s1)', '4 3', 'med');
+  vline(d.tuned_median, 'var(--s2)', '4 3', 'med');
+  vline(d.default_mean, 'var(--s1)', null, 'mean');
+  vline(d.tuned_mean, 'var(--s2)', null, 'mean');
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderDistChart(DIST_DATA, 'chart-dist');
+</script>

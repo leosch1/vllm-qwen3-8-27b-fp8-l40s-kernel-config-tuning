@@ -1,0 +1,80 @@
+[
+  {
+    "M": 1024,
+    "repeat": 1,
+    "winner": {
+      "BLOCK_SIZE_M": 128,
+      "BLOCK_SIZE_N": 128,
+      "BLOCK_SIZE_K": 128,
+      "GROUP_SIZE_M": 1,
+      "num_warps": 8,
+      "num_stages": 3
+    },
+    "winner_time_us": 54.381760358810425
+  },
+  {
+    "M": 1024,
+    "repeat": 2,
+    "winner": {
+      "BLOCK_SIZE_M": 128,
+      "BLOCK_SIZE_N": 128,
+      "BLOCK_SIZE_K": 128,
+      "GROUP_SIZE_M": 1,
+      "num_warps": 8,
+      "num_stages": 3
+    },
+    "winner_time_us": 56.459841132164
+  },
+  {
+    "M": 1024,
+    "repeat": 3,
+    "winner": {
+      "BLOCK_SIZE_M": 128,
+      "BLOCK_SIZE_N": 128,
+      "BLOCK_SIZE_K": 128,
+      "GROUP_SIZE_M": 1,
+      "num_warps": 8,
+      "num_stages": 4
+    },
+    "winner_time_us": 58.70944023132324
+  },
+  {
+    "M": 2048,
+    "repeat": 1,
+    "winner": {
+      "BLOCK_SIZE_M": 128,
+      "BLOCK_SIZE_N": 128,
+      "BLOCK_SIZE_K": 128,
+      "GROUP_SIZE_M": 1,
+      "num_warps": 8,
+      "num_stages": 4
+    },
+    "winner_time_us": 115.62144041061401
+  },
+  {
+    "M": 2048,
+    "repeat": 2,
+    "winner": {
+      "BLOCK_SIZE_M": 128,
+      "BLOCK_SIZE_N": 128,
+      "BLOCK_SIZE_K": 128,
+      "GROUP_SIZE_M": 1,
+      "num_warps": 8,
+      "num_stages": 4
+    },
+    "winner_time_us": 114.61151838302612
+  },
+  {
+    "M": 2048,
+    "repeat": 3,
+    "winner": {
+      "BLOCK_SIZE_M": 128,
+      "BLOCK_SIZE_N": 128,
+      "BLOCK_SIZE_K": 128,
+      "GROUP_SIZE_M": 1,
+      "num_warps": 8,
+      "num_stages": 3
+    },
+    "winner_time_us": 112.12640047073364
+  }
+]

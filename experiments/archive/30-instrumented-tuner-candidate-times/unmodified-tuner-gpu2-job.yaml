@@ -1,0 +1,84 @@
+# DISCRIMINATING TEST (exp29b): the UNMODIFIED real tuner (byte-identical to
+# experiments/27's real-tuner-repeat-m1024-job.yaml -- no instrumentation, no
+# JSONL writes in the timing loop), but PINNED to node gpu-node-a.
+#
+# Why: experiment 27 ran the unmodified tuner on node gpu-mh67p and got
+# GROUP_SIZE_M in {16,32,64} 6 times out of 6 at M=1024 -- never 1.
+# Experiment 29 ran an INSTRUMENTED copy on node gpu2-gkm7z and got
+# GROUP_SIZE_M=1 twice out of two. Two variables differ between those
+# (physical GPU, and my added per-candidate file I/O inside the timing
+# loop), so neither result isolates a cause.
+#
+# This job holds the script constant (unmodified) and changes only the node,
+# so it separates them:
+#   -> lands on GROUP_SIZE_M=1  => the GPU/node is the differentiator, and
+#      exp27's "fresh runs never reproduce the committed config" conclusion
+#      was an artifact of which node was free.
+#   -> lands on a grouped value => exp29's instrumentation perturbed the
+#      timing loop, and its winner-level results need discounting (its
+#      within-quartet 58.9% statistic survives either way, being an
+#      internal comparison where every candidate gets equal treatment).
+#
+# Run this only when no other GPU job is active on gpu2-gkm7z -- a
+# neighbouring job on the second card can perturb timings via shared CPU/PCIe.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-exp29b-unmod-gpu2
+  namespace: enterprise-ai
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-autotune
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: gpu-autotune
+    spec:
+      restartPolicy: Never
+      tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Equal
+        value: present
+      initContainers:
+      - name: clone-repo
+        image: docker.io/alpine/git:latest
+        args:
+        - clone
+        - --depth=1
+        - --branch=qwen3-8-27b-fp8-dense-tuning
+        - https://github.com/leosch1/vllm.git
+        - /repo
+        volumeMounts:
+        - mountPath: /repo
+          name: repo
+      containers:
+      - name: real-tuner-repeat
+        image: docker.io/vllm/vllm-openai:v0.27.1
+        workingDir: /repo/benchmarks/kernels
+        env:
+        - name: HOME
+          value: /tmp
+        resources:
+          requests:
+            cpu: '2'
+            memory: 16Gi
+            nvidia.com/gpu: '1'
+          limits:
+            cpu: '6'
+            memory: 28Gi
+            nvidia.com/gpu: '1'
+        command:
+        - /bin/bash
+        - -c
+        args:
+        - "set -euo pipefail\nfor i in 1 2 3; do\n  echo \"==========================================\"\n  echo \"=== REAL TUNER RUN $i/3 (M=1024, all 5 shapes, batch-size fixed) ===\"\n  echo \"==========================================\"\n  python3 benchmark_w8a8_block_fp8.py \\\n      --tp-size 2 --input-type fp8 --out-dtype bfloat16 \\\n      --block-n 128 --block-k 128 --batch-size 1024 \\\n      --save-path /repo/tuned-configs-run$i\ndone\n\necho \"\"\necho \"=== gate_up_proj (N=17408,K=5120) GROUP_SIZE_M at M=1024, all 3 runs ===\"\nfor i in 1 2 3; do\n  echo \"--- run $i ---\"\n  python3 -c \"\nimport json\nwith open('/repo/tuned-configs-run$i/N=17408,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json') as f:\n    d = json.load(f)\nprint(json.dumps(d['1024'], indent=2))\n\"\ndone\n\necho \"=== done, sleeping so logs can be read ===\"\nsleep infinity\n"
+        volumeMounts:
+        - mountPath: /repo
+          name: repo
+      volumes:
+      - name: repo
+        emptyDir: {}
+      nodeSelector:
+        kubernetes.io/hostname: gpu-node-a

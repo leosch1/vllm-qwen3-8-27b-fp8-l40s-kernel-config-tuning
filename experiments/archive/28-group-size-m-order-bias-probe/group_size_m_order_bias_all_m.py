@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""GROUP_SIZE_M win-rate probe across ALL large-M anchors (follow-up to
+group_size_m_order_bias.py, which only checked M=1024).
+
+That first probe found GROUP_SIZE_M=1 winning the real tuner's own
+"best-of-4" comparison (same benchmark_config(), same 5-warmup+10-iter
+regime, same [1,16,32,64] order, same strict `<` selection) only ~11% of
+the time at M=1024's own winning base combo -- far from enough to explain
+the real historical tuning run landing on GROUP_SIZE_M=1 at SIX different
+M-anchors (512, 1024, 1536, 2048, 3072, 4096), each independently, unless
+the win-rate is much higher at the OTHER anchors' own specific combos
+(which weren't tested).
+
+This script repeats that exact same probe at all six anchors, each with
+its own actual winning BLOCK_SIZE_M/N/K/num_warps/num_stages (varying only
+GROUP_SIZE_M) and its own correctly-sized A/B/As/Bs pair. Reports the
+GROUP_SIZE_M=1 win-rate at each M, forward order [1,16,32,64] (the real
+tuner's own order) and reversed order [64,32,16,1], same as before.
+"""
+import json
+
+import torch
+
+from _vendored_matmul_timing import benchmark_config
+from vllm.utils.platform_utils import get_device_name_as_file_name
+
+BLOCK_N, BLOCK_K = 128, 128
+OUT_DTYPE = torch.bfloat16
+TUNED_DIR = "./tuned-configs"
+N, K = 17408, 5120  # gate_up_proj
+ANCHORS = [512, 1024, 1536, 2048, 3072, 4096]
+GROUP_CANDIDATES = [1, 16, 32, 64]
+FORWARD_ORDER = [1, 16, 32, 64]
+REVERSED_ORDER = [64, 32, 16, 1]
+
+N_TRIALS = 100
+NUM_ITERS = 10  # matches tune()'s benchmark_config(..., num_iters=10) exactly
+
+
+def make_tensors(M):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    A_fp32 = (torch.rand(M, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    A = A_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    B_fp32 = (torch.rand(N, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    B = B_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    n_tiles = (N + BLOCK_N - 1) // BLOCK_N
+    k_tiles = (K + BLOCK_K - 1) // BLOCK_K
+    As = torch.rand(M, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    Bs = torch.rand(n_tiles, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    return A, B, As, Bs
+
+
+def run_best_of_4(A, B, As, Bs, base_config, order):
+    best_g = None
+    best_time = float("inf")
+    for g in order:
+        cfg = dict(base_config, GROUP_SIZE_M=g)
+        t = benchmark_config(A, B, As, Bs, [BLOCK_N, BLOCK_K], cfg, OUT_DTYPE, num_iters=NUM_ITERS)
+        if t < best_time:
+            best_time = t
+            best_g = g
+    return best_g
+
+
+def main():
+    device_name = get_device_name_as_file_name()
+    json_path = (
+        f"{TUNED_DIR}/N={N},K={K},device_name={device_name},"
+        f"dtype=fp8_w8a8,block_shape=[{BLOCK_N},{BLOCK_K}].json"
+    )
+    with open(json_path) as f:
+        tuned_configs = {int(k): v for k, v in json.load(f).items()}
+
+    summary = {}
+    for M in ANCHORS:
+        base_config = {k: v for k, v in tuned_configs[M].items() if k != "GROUP_SIZE_M"}
+        recorded_gsm = tuned_configs[M]["GROUP_SIZE_M"]
+        print(f"\n########## M={M}  (recorded tuned GROUP_SIZE_M={recorded_gsm}) ##########", flush=True)
+        print(f"base_config = {base_config}", flush=True)
+
+        A, B, As, Bs = make_tensors(M)
+        torch.accelerator.synchronize()
+
+        for g in GROUP_CANDIDATES:
+            cfg = dict(base_config, GROUP_SIZE_M=g)
+            benchmark_config(A, B, As, Bs, [BLOCK_N, BLOCK_K], cfg, OUT_DTYPE, num_iters=1)
+        torch.accelerator.synchronize()
+
+        m_summary = {}
+        for label, order in [("forward", FORWARD_ORDER), ("reversed", REVERSED_ORDER)]:
+            wins = {g: 0 for g in GROUP_CANDIDATES}
+            for _ in range(N_TRIALS):
+                w = run_best_of_4(A, B, As, Bs, base_config, order)
+                wins[w] += 1
+            print(f"  {label:9s} {order}: {wins}", flush=True)
+            m_summary[label] = wins
+        summary[M] = {"recorded_group_size_m": recorded_gsm, **m_summary}
+
+        del A, B, As, Bs
+        torch.cuda.empty_cache()
+
+    print("\n\n=== FULL SUMMARY: GROUP_SIZE_M=1 win-rate per M-anchor ===")
+    print(f"{'M':>6} | {'recorded':>8} | {'fwd win% (1)':>14} | {'rev win% (1)':>14}")
+    for M in ANCHORS:
+        s = summary[M]
+        fwd1 = s["forward"][1]
+        rev1 = s["reversed"][1]
+        print(f"{M:>6} | {s['recorded_group_size_m']:>8} | {fwd1:>12}% | {rev1:>12}%")
+
+    print("\nRaw JSON:")
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,235 @@
+<title>Traffic vs Speedup</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; /* traffic */
+  --s2: #eb6834; /* speedup */
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 880px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 6px; max-width: 720px; }
+.panel-title { font-size: 12px; color: var(--text-secondary); font-weight: 600; margin: 20px 0 2px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 6px 0 2px; font-size: 12.5px; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0; pointer-events: none; }
+.m160-line { stroke: var(--text-muted); stroke-width: 1; opacity: 0.6; }
+.m160-label { fill: var(--text-muted); font-size: 10px; font-style: italic; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-group { position: relative; }
+</style>
+
+<div class="viz-root">
+  <h1>Real GEMM traffic vs. kernel speedup, by batch size</h1>
+  <p class="sub">Top: % of actual w8a8_triton_block_scaled_mm calls at each batch size M, measured directly at the call site, summed across 10 sampled <code>--max-concurrency</code> levels (1,2,4,8,16,32,48,64,96,128) and both configs -- weighted toward the higher levels, which sent far more requests (num-prompts scaled 16x with concurrency). <code>--max-num-seqs=128</code> (raised from 64, so decode can now exceed the old scheduler ceiling -- M=160 genuinely occurs here). Bottom: mean tuned-config speedup across all 5 shapes at that M (2000 iterations/point). Filled dots = tuned anchors, rings = held-out/generalization points.</p>
+
+  <div class="panel-title">Real traffic (% of GEMM calls)</div>
+  <div class="legend"><div class="legend-item"><span class="swatch" style="background:var(--s1)"></span>calls at this M</div></div>
+  <div class="chart-group" id="traffic-wrap"></div>
+
+  <div class="panel-title">Mean kernel-level speedup (%)</div>
+  <div class="legend">
+    <div class="legend-item"><span class="swatch" style="background:var(--s2)"></span>mean speedup, 5 shapes</div>
+  </div>
+  <div class="chart-group" id="speedup-wrap"></div>
+</div>
+
+<script>
+const TRAFFIC = [[1, 0.27816411682892905], [2, 0.27816411682892905], [4, 0.27816411682892905], [8, 0.27816411682892905], [16, 0.27816411682892905], [24, 0.27816411682892905], [32, 0.27816411682892905], [40, 0.27816411682892905], [48, 0.27816411682892905], [56, 0.27816411682892905], [64, 0.27816411682892905], [72, 0.27816411682892905], [80, 0.27816411682892905], [88, 0.27816411682892905], [96, 0.27816411682892905], [104, 0.27816411682892905], [112, 0.27816411682892905], [120, 0.4172461752433936], [128, 0.48678720445062584], [136, 0.13908205841446453], [144, 0.13908205841446453], [152, 0.13908205841446453], [160, 0.13908205841446453], [168, 0.13908205841446453], [176, 0.13908205841446453], [184, 0.13908205841446453], [192, 0.13908205841446453], [200, 0.13908205841446453], [208, 0.13908205841446453], [216, 0.13908205841446453], [224, 0.13908205841446453], [232, 0.13908205841446453], [240, 0.13908205841446453], [248, 0.27816411682892905], [256, 0.27816411682892905], [273, 0.03477051460361613], [308, 4.902642559109874], [309, 2.7121001390820583], [310, 1.7385257301808066], [311, 0.27816411682892905], [315, 0.6258692628650904], [316, 0.34770514603616137], [317, 0.6954102920723227], [318, 0.2086230876216968], [319, 0.2086230876216968], [333, 0.6258692628650904], [334, 0.2086230876216968], [335, 0.2086230876216968], [339, 0.6954102920723227], [340, 0.06954102920723226], [343, 0.03477051460361613], [347, 0.06954102920723226], [349, 0.764951321279555], [350, 0.27816411682892905], [365, 0.5563282336578581], [366, 0.34770514603616137], [367, 0.13908205841446453], [390, 0.03477051460361613], [391, 0.3129346314325452], [392, 0.13908205841446453], [393, 0.03477051460361613], [397, 0.4172461752433936], [398, 0.06954102920723226], [399, 0.03477051460361613], [402, 0.4172461752433936], [403, 0.06954102920723226], [404, 0.03477051460361613], [435, 0.764951321279555], [436, 0.3129346314325452], [437, 0.24339360222531292], [442, 0.03477051460361613], [488, 0.03477051460361613], [541, 0.06954102920723226], [548, 0.03477051460361613], [551, 0.06954102920723226], [587, 0.03477051460361613], [649, 0.06954102920723226], [711, 0.03477051460361613], [744, 0.03477051460361613], [749, 0.03477051460361613], [793, 0.03477051460361613], [812, 0.06954102920723226], [844, 0.06954102920723226], [886, 0.03477051460361613], [906, 0.03477051460361613], [925, 0.2086230876216968], [926, 0.5563282336578581], [927, 0.2086230876216968], [928, 0.13908205841446453], [938, 0.13908205841446453], [939, 0.03477051460361613], [940, 0.03477051460361613], [969, 0.03477051460361613], [970, 0.06954102920723226], [985, 0.2086230876216968], [986, 0.13908205841446453], [987, 0.2086230876216968], [988, 0.13908205841446453], [1019, 0.03477051460361613], [1026, 0.03477051460361613], [1049, 0.06954102920723226], [1050, 0.13908205841446453], [1051, 0.03477051460361613], [1052, 0.03477051460361613], [1097, 0.03477051460361613], [1119, 0.06954102920723226], [1142, 0.03477051460361613], [1213, 0.03477051460361613], [1234, 0.03477051460361613], [1244, 0.06954102920723226], [1245, 0.13908205841446453], [1246, 0.45201668984700977], [1247, 0.06954102920723226], [1250, 0.06954102920723226], [1278, 0.06954102920723226], [1289, 0.03477051460361613], [1295, 0.06954102920723226], [1321, 0.03477051460361613], [1324, 0.06954102920723226], [1325, 0.13908205841446453], [1327, 0.06954102920723226], [1344, 0.27816411682892905], [1345, 0.03477051460361613], [1346, 0.06954102920723226], [1347, 0.1043115438108484], [1348, 0.03477051460361613], [1402, 0.03477051460361613], [1413, 0.03477051460361613], [1429, 0.06954102920723226], [1439, 0.06954102920723226], [1498, 0.03477051460361613], [1548, 0.1043115438108484], [1549, 0.45201668984700977], [1550, 0.2086230876216968], [1551, 0.03477051460361613], [1584, 0.06954102920723226], [1585, 0.3129346314325452], [1586, 0.27816411682892905], [1598, 0.03477051460361613], [1610, 0.03477051460361613], [1611, 0.03477051460361613], [1631, 0.06954102920723226], [1632, 0.1043115438108484], [1633, 0.03477051460361613], [1634, 0.06954102920723226], [1666, 0.03477051460361613], [1698, 0.06954102920723226], [1841, 0.03477051460361613], [1849, 0.06954102920723226], [1850, 0.6258692628650904], [1851, 0.34770514603616137], [1852, 0.6954102920723227], [1853, 0.27816411682892905], [1855, 0.13908205841446453], [1857, 0.1043115438108484], [1860, 0.03477051460361613], [1862, 0.4172461752433936], [1863, 0.5563282336578581], [1864, 0.6258692628650904], [1865, 0.6954102920723227], [1866, 0.34770514603616137], [1867, 0.13908205841446453], [1868, 0.13908205841446453], [1869, 0.4172461752433936], [1870, 0.2086230876216968], [1871, 0.06954102920723226], [1872, 0.06954102920723226], [1873, 0.13908205841446453], [1874, 0.27816411682892905], [1875, 0.13908205841446453], [1876, 0.27816411682892905], [1877, 0.06954102920723226], [1878, 0.48678720445062584], [1879, 1.2517385257301807], [1880, 1.2517385257301807], [1881, 1.1821974965229485], [1882, 0.8344923504867872], [1883, 0.2086230876216968], [1885, 0.06954102920723226], [1886, 0.13908205841446453], [1887, 0.2086230876216968], [1888, 0.13908205841446453], [1890, 0.06954102920723226], [1893, 0.06954102920723226], [1894, 0.9040333796940195], [1895, 1.52990264255911], [1896, 1.7385257301808066], [1897, 1.1126564673157162], [1898, 1.6689847009735743], [1899, 0.8344923504867872], [1901, 0.06954102920723226], [1902, 0.1043115438108484], [1903, 0.1043115438108484], [1904, 0.2086230876216968], [1905, 0.13908205841446453], [1906, 0.27816411682892905], [1920, 0.03477051460361613], [1921, 0.03477051460361613], [1925, 0.13908205841446453], [1926, 1.2517385257301807], [1927, 3.05980528511822], [1928, 2.2253129346314324], [1929, 1.9123783031988872], [1930, 1.5994436717663423], [1931, 0.7301808066759388], [1932, 0.13908205841446453], [1933, 0.1043115438108484], [1934, 0.24339360222531292], [1935, 0.06954102920723226], [1936, 0.03477051460361613], [1937, 0.17385257301808069], [1938, 0.03477051460361613], [1939, 0.03477051460361613], [1957, 0.2086230876216968], [1958, 2.1557719054242], [1959, 3.1988873435326846], [1960, 3.7552155771905427], [1961, 2.781641168289291], [1962, 1.9819193324061197], [1963, 0.9040333796940195], [1964, 0.3824756606397775], [1965, 0.24339360222531292], [1966, 0.1043115438108484], [1967, 0.06954102920723226], [1968, 0.06954102920723226], [1969, 0.06954102920723226], [1970, 0.24339360222531292], [1971, 0.06954102920723226], [1972, 0.03477051460361613], [1973, 0.03477051460361613], [1982, 0.06954102920723226], [1991, 0.1043115438108484], [1992, 0.06954102920723226], [1993, 0.03477051460361613], [1994, 0.13908205841446453], [1995, 0.06954102920723226], [1996, 0.06954102920723226], [1997, 0.03477051460361613], [1999, 0.03477051460361613], [2002, 0.03477051460361613], [2005, 0.1043115438108484], [2006, 0.03477051460361613], [2012, 0.03477051460361613], [2016, 0.13908205841446453], [2017, 0.13908205841446453], [2021, 0.06954102920723226], [2024, 0.06954102920723226], [2030, 0.06954102920723226], [2031, 0.06954102920723226], [2035, 0.03477051460361613], [2038, 0.1043115438108484], [2039, 0.06954102920723226], [2041, 0.03477051460361613], [2042, 0.03477051460361613], [2048, 14.534075104311544]];   // [[M, pct], ...]
+const SPEEDUP = [[1, 61.720000000000006, "anchor"], [2, 51.0, "anchor"], [3, 47.33999999999999, "held-out"], [4, 45.980000000000004, "anchor"], [6, 42.660000000000004, "held-out"], [8, 41.660000000000004, "anchor"], [12, 40.739999999999995, "held-out"], [16, 39.160000000000004, "anchor"], [20, 26.4, "held-out"], [24, 35.120000000000005, "anchor"], [28, 35.519999999999996, "held-out"], [32, 34.760000000000005, "anchor"], [40, 17.6, "held-out"], [48, 24.9, "anchor"], [56, 26.860000000000003, "held-out"], [64, 29.420000000000005, "anchor"], [80, 6.32, "held-out"], [96, 19.02, "anchor"], [112, 11.08, "held-out"], [128, 14.64, "anchor"], [160, -0.36000000000000043, "held-out"], [200, 6.58, "held-out"], [256, 8.540000000000001, "anchor"], [384, 5.66, "held-out"], [512, 11.54, "anchor"], [768, 4.799999999999999, "held-out"], [1024, 8.84, "anchor"], [1280, 9.600000000000001, "held-out"], [1536, 8.66, "anchor"], [1792, 10.2, "held-out"], [2048, 9.260000000000002, "anchor"], [2560, 10.1, "held-out"], [3072, 10.959999999999999, "anchor"], [3584, 11.479999999999999, "held-out"], [4096, 12.200000000000001, "anchor"]];   // [[M, meanPct, type], ...]
+
+const W = 840, H = 170, PAD_L = 44, PAD_R = 16, PAD_T = 10, PAD_B = 24;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = [...new Set([...TRAFFIC.map(p=>p[0]), ...SPEEDUP.map(p=>p[0])])];
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(m) { return PAD_L + (Math.log2(m) - xMin) / (xMax - xMin) * plotW; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+function xTicks(svg) {
+  [1,2,4,8,16,32,64,128,256,512,1024,2048,4096].forEach(m => {
+    if (m < Math.min(...allM) || m > Math.max(...allM)) return;
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', xPos(m)); t.setAttribute('y', H - 6);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = m;
+    svg.appendChild(t);
+  });
+}
+
+function m160Marker(svg, yTop, yBot, labelY) {
+  const x = xPos(160);
+  const l = document.createElementNS(svgNS, 'line');
+  l.setAttribute('class', 'm160-line');
+  l.setAttribute('x1', x); l.setAttribute('x2', x);
+  l.setAttribute('y1', yTop); l.setAttribute('y2', yBot);
+  svg.appendChild(l);
+  const t = document.createElementNS(svgNS, 'text');
+  t.setAttribute('class', 'm160-label');
+  t.setAttribute('x', x + 4); t.setAttribute('y', labelY);
+  t.textContent = 'M=160';
+  svg.appendChild(t);
+}
+
+// --- traffic panel (bars) ---
+{
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const maxV = Math.ceil(Math.max(...TRAFFIC.map(p=>p[1])) / 5) * 5;
+  const yPos = v => PAD_T + plotH - (v / maxV) * plotH;
+
+  for (let v = 0; v <= maxV; v += 5) {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v + '%';
+    svg.appendChild(t);
+  }
+  xTicks(svg);
+
+  TRAFFIC.forEach(([m, pct]) => {
+    const x = xPos(m);
+    const y = yPos(pct);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x - 3); rect.setAttribute('y', y);
+    rect.setAttribute('width', 6); rect.setAttribute('height', PAD_T + plotH - y);
+    rect.setAttribute('rx', 2);
+    rect.setAttribute('fill', 'var(--s1)');
+    rect.style.cursor = 'pointer';
+    rect.addEventListener('mouseenter', (e) => {
+      tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">traffic</span><b>${pct.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    rect.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    rect.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(rect);
+  });
+
+  m160Marker(svg, PAD_T, PAD_T + plotH, PAD_T + 10);
+  document.getElementById('traffic-wrap').appendChild(svg);
+}
+
+// --- speedup panel (line) ---
+{
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const vals = SPEEDUP.map(p=>p[1]);
+  const maxV = Math.ceil(Math.max(...vals) / 10) * 10;
+  const minV = Math.floor(Math.min(...vals) / 10) * 10;
+  const yPos = v => PAD_T + plotH - (v - minV) / (maxV - minV) * plotH;
+
+  for (let v = minV; v <= maxV; v += 10) {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v + '%';
+    svg.appendChild(t);
+  }
+  xTicks(svg);
+
+  let d = '';
+  SPEEDUP.forEach(([m, v], i) => {
+    d += (i === 0 ? 'M' : 'L') + xPos(m) + ',' + yPos(v) + ' ';
+  });
+  const path = document.createElementNS(svgNS, 'path');
+  path.setAttribute('d', d.trim());
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'var(--s2)');
+  path.setAttribute('stroke-width', '2');
+  path.setAttribute('stroke-linecap', 'round');
+  path.setAttribute('stroke-linejoin', 'round');
+  svg.appendChild(path);
+
+  SPEEDUP.forEach(([m, v, type]) => {
+    const x = xPos(m), y = yPos(v);
+    const c = document.createElementNS(svgNS, 'circle');
+    c.setAttribute('cx', x); c.setAttribute('cy', y);
+    if (type === 'anchor') {
+      c.setAttribute('r', 4); c.setAttribute('fill', 'var(--s2)');
+    } else {
+      c.setAttribute('r', 3.5); c.setAttribute('fill', 'var(--surface-1)');
+      c.setAttribute('stroke', 'var(--s2)'); c.setAttribute('stroke-width', '1.75');
+    }
+    c.style.cursor = 'pointer';
+    c.addEventListener('mouseenter', (e) => {
+      tooltip.innerHTML = `<div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">${type}</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+      tooltip.style.opacity = 1;
+    });
+    c.addEventListener('mousemove', (e) => {
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+    });
+    c.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+    svg.appendChild(c);
+  });
+
+  m160Marker(svg, PAD_T, PAD_T + plotH, PAD_T + 10);
+  document.getElementById('speedup-wrap').appendChild(svg);
+}
+</script>

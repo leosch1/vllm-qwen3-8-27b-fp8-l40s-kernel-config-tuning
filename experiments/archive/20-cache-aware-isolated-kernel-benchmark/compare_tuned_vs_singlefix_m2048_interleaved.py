@@ -1,0 +1,171 @@
+"""
+Fine-grained interleaved design at gate_up_proj M=2048: instead of running
+the full 2000-iteration tuned block then the full 2000-iteration singlefix
+block sequentially (the design used everywhere else in this experiment),
+alternate the two configs iteration-by-iteration, using the IDENTICAL
+weight tensor for both configs within each round. This is a strictly
+tighter counterbalancing than resetting the B-copy counter between two
+sequential blocks: it cancels not just slow drift across the whole sweep,
+but any transient perturbation (contention, clock-state blip, driver
+stall) that would otherwise hit one config's whole block disproportionately,
+since both configs now sample the same instant in wall-clock time at
+every round.
+
+Repeated N_REPEATS times (fresh A/As/64 B-copies each time) so the
+between-repeat stdev can be compared directly against Part 9's sequential-
+block design (stdev 0.74pp over 10 repeats) -- if interleaving removes the
+dominant noise source, this stdev should shrink substantially.
+"""
+
+import json
+import statistics
+
+import torch
+
+from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+    _w8a8_triton_block_scaled_mm,
+)
+from vllm.triton_utils import triton
+from vllm.utils.platform_utils import get_device_name_as_file_name
+
+
+def w8a8_block_matmul(A, B, As, Bs, block_size, config, output_dtype=torch.float16):
+    block_n, block_k = block_size[0], block_size[1]
+    M = A.numel() // A.shape[-1]
+    N, K = B.shape
+    C = A.new_empty(A.shape[:-1] + (N,), dtype=output_dtype)
+
+    def grid(META):
+        return (triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),)
+
+    kernel = _w8a8_triton_block_scaled_mm
+    kernel[grid](
+        A, B, C, As, Bs, M, N, K, block_n, block_k,
+        A.stride(-2), A.stride(-1),
+        B.stride(1), B.stride(0),
+        C.stride(-2), C.stride(-1),
+        As.stride(-2), As.stride(-1),
+        Bs.stride(1), Bs.stride(0),
+        **config,
+    )
+    return C
+
+
+def time_one(A, B, As, Bs, block_size, config, out_dtype, start_event, end_event):
+    torch.accelerator.synchronize()
+    start_event.record()
+    w8a8_block_matmul(A, B, As, Bs, block_size, config, out_dtype)
+    end_event.record()
+    end_event.synchronize()
+    return start_event.elapsed_time(end_event)
+
+
+def benchmark_interleaved(A, As, copies, block_size, config_a, config_b, out_dtype, num_iters=2000):
+    """Alternates config_a/config_b iteration-by-iteration, same weight
+    tensor for both in each round. Returns (mean_a_us, sem_a_us, mean_b_us, sem_b_us)."""
+    start_event = torch.Event(enable_timing=True)
+    end_event = torch.Event(enable_timing=True)
+
+    # warmup both, interleaved, same as the 5-iter warmup used elsewhere
+    for i in range(5):
+        B, Bs = copies[i % len(copies)]
+        time_one(A, B, As, Bs, block_size, config_a, out_dtype, start_event, end_event)
+        time_one(A, B, As, Bs, block_size, config_b, out_dtype, start_event, end_event)
+
+    lat_a, lat_b = [], []
+    for i in range(num_iters):
+        B, Bs = copies[i % len(copies)]
+        lat_a.append(time_one(A, B, As, Bs, block_size, config_a, out_dtype, start_event, end_event))
+        lat_b.append(time_one(A, B, As, Bs, block_size, config_b, out_dtype, start_event, end_event))
+
+    def stats(latencies):
+        samples_us = [l * 1000.0 / 10 for l in latencies]
+        mean_us = statistics.mean(samples_us)
+        stdev_us = statistics.stdev(samples_us)
+        sem_us = stdev_us / (len(samples_us) ** 0.5)
+        return mean_us, sem_us
+
+    mean_a, sem_a = stats(lat_a)
+    mean_b, sem_b = stats(lat_b)
+    return mean_a, sem_a, mean_b, sem_b
+
+
+TUNED_DIR = "/tmp/tuned-configs"
+SINGLEFIX_DIR = "/tmp/singlefix-configs"
+N, K = 17408, 5120
+M = 2048
+BLOCK_N, BLOCK_K = 128, 128
+OUT_DTYPE = torch.bfloat16
+NUM_ITERS = 2000
+N_WEIGHT_COPIES = 64
+N_REPEATS = 10
+
+
+def make_A(M, K, block_k):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    A_fp32 = (torch.rand(M, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    A = A_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    k_tiles = (K + block_k - 1) // block_k
+    As = torch.rand(M, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    return A, As
+
+
+def make_B_copies(N, K, block_n, block_k, count):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    n_tiles = (N + block_n - 1) // block_n
+    k_tiles = (K + block_k - 1) // block_k
+    copies = []
+    for _ in range(count):
+        B_fp32 = (torch.rand(N, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+        B = B_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+        Bs = torch.rand(n_tiles, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+        copies.append((B, Bs))
+    return copies
+
+
+def main():
+    torch.cuda.init()
+    device_name = get_device_name_as_file_name()
+
+    tuned_json_path = f"{TUNED_DIR}/N={N},K={K},device_name={device_name},dtype=fp8_w8a8,block_shape=[{BLOCK_N},{BLOCK_K}].json"
+    singlefix_json_path = f"{SINGLEFIX_DIR}/N={N},K={K},device_name={device_name},dtype=fp8_w8a8,block_shape=[{BLOCK_N},{BLOCK_K}].json"
+    with open(tuned_json_path) as f:
+        tuned_config = json.load(f)[str(M)]
+    with open(singlefix_json_path) as f:
+        singlefix_config = json.load(f)[str(M)]
+
+    print(f"tuned_config[{M}] = {tuned_config}")
+    print(f"singlefix_config[{M}] = {singlefix_config}")
+    print()
+    print(f"### gate_up_proj (N={N}, K={K}), M={M}, {N_REPEATS} repeats, ITERATION-LEVEL INTERLEAVED design")
+    print("| repeat | tuned_mean | singlefix_mean | speedup |")
+    print("|---:|---:|---:|---:|")
+
+    speedups = []
+    for repeat in range(1, N_REPEATS + 1):
+        A, As = make_A(M, K, BLOCK_K)
+        copies = make_B_copies(N, K, BLOCK_N, BLOCK_K, N_WEIGHT_COPIES)
+        torch.accelerator.synchronize()
+
+        t_mean, t_sem, s_mean, s_sem = benchmark_interleaved(
+            A, As, copies, [BLOCK_N, BLOCK_K], tuned_config, singlefix_config, OUT_DTYPE, num_iters=NUM_ITERS,
+        )
+        speedup = (t_mean - s_mean) / t_mean * 100
+        speedups.append(speedup)
+        print(f"| {repeat} | {t_mean:.3f} | {s_mean:.3f} | {speedup:+.2f}% |")
+
+    mean = statistics.mean(speedups)
+    stdev = statistics.stdev(speedups)
+    sem = stdev / (len(speedups) ** 0.5)
+    n_positive = sum(1 for s in speedups if s > 0)
+    print()
+    print(f"observed speedup values: {[round(s,2) for s in speedups]}")
+    print(f"mean: {mean:+.2f}%, stdev: {stdev:.2f}pp, SEM: {sem:.2f}pp")
+    print(f"{n_positive}/{len(speedups)} repeats positive")
+    print(f"95% CI (approx, t~2.26 for n=10): [{mean - 2.26*sem:+.2f}%, {mean + 2.26*sem:+.2f}%]")
+
+
+if __name__ == "__main__":
+    main()

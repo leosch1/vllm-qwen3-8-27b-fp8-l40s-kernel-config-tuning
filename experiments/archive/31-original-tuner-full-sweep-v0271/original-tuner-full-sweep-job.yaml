@@ -1,0 +1,167 @@
+# 30 -- ORIGINAL (unfixed) tuner, FULL 18-M sweep, gate_up_proj only, v0.27.1.
+#
+# The missing control. This repo contains exactly ONE full-sweep run of the
+# original unfixed tuner -- the run that produced the committed
+# tuned-configs/ (experiments/01/tuning-and-comparison-v0.27.1.log). It has
+# never been repeated. Every unfixed rerun since (experiments/27, 29b) used
+# `--batch-size 1024`, which jumps straight to M=1024 in a cold process and
+# therefore does NOT reproduce the original's execution context.
+#
+# Why that matters: the committed config has GROUP_SIZE_M=1 at ALL SIX
+# large-M anchors (512..4096) for gate_up_proj, yet short cold-start unfixed
+# runs produced GROUP_SIZE_M=1 only 1 time in 9 at M=1024. If the tuner were
+# really that variable, six consecutive 1s would be vanishingly unlikely --
+# so something about the real full-sweep context must systematically favour
+# it. Experiment 29 measured a +17% thermal/clock drift across a session
+# (96.4% of 1128 configs slower on the 3rd repeat than the 1st), which makes
+# "the GPU has been saturated for ~30-60min by the time the sweep reaches
+# M>=512" the leading candidate. Untested until now.
+#
+# Faithfulness: gate_up_proj is the FIRST shape the real script tunes, so a
+# single-shape full-M sweep reproduces the original's execution context for
+# that shape exactly -- same cold start, same 13 preceding searches at
+# smaller M, same thermal ramp -- at ~1/5 the cost of the full 5-shape run.
+#
+# The tuning script itself is UNMODIFIED: cloned from
+# leosch1/vllm@qwen3-8-27b-fp8-dense-tuning (the exact branch/commit that
+# produced the committed configs). Nothing is patched, instrumented, or
+# flushed -- deliberately, since experiment 29 showed that adding logging
+# inside the timing loop may itself perturb the outcome. driver.py only
+# overrides get_weight_shapes() to return gate_up_proj alone; tune(),
+# benchmark_config() and main() are untouched, and the override is resolved
+# in the parent process before mp.Pool spawns (main() passes the already-
+# resolved weight_shapes through process_args), so it survives the spawn.
+#
+# Expect ~1h: three cold Triton compile passes (M=1, M=2, M=16 -- the three
+# distinct argument-specialization classes) at ~15min each, then the
+# remaining 15 batch sizes at seconds-to-a-minute each.
+#
+# Usage: kubectl apply -f original-tuner-full-sweep-job.yaml
+#   kubectl logs -f <pod> -n enterprise-ai | grep -v 'it/s]'
+#   kubectl cp enterprise-ai/<pod>:/repo/original-tuned-configs ./original-tuned-configs
+#   kubectl delete -f original-tuner-full-sweep-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen3-8-27b-exp30-orig-full-sweep
+  namespace: enterprise-ai
+  labels:
+    kueue.x-k8s.io/queue-name: gpu-autotune
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        kueue.x-k8s.io/queue-name: gpu-autotune
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      initContainers:
+        - name: clone-repo
+          image: docker.io/alpine/git:latest
+          args:
+            - clone
+            - --depth=1
+            - --branch=qwen3-8-27b-fp8-dense-tuning
+            - https://github.com/leosch1/vllm.git
+            - /repo/vllm
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+      containers:
+        - name: exp30-orig-full-sweep
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          workingDir: /repo/vllm/benchmarks/kernels
+          env:
+            - name: HOME
+              value: /tmp
+          volumeMounts:
+            - mountPath: /repo
+              name: repo
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "6"
+              memory: 28Gi
+              nvidia.com/gpu: "1"
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -euo pipefail
+
+              echo "=== commit of the tuning script being run (git binary absent in this image) ==="
+              cat /repo/vllm/.git/HEAD || true
+              cat /repo/vllm/.git/refs/heads/* 2>/dev/null || true
+              echo ""
+              echo "=== sanity: confirm the script is unmodified ==="
+              md5sum /repo/vllm/benchmarks/kernels/benchmark_w8a8_block_fp8.py
+              grep -c "flush\|Cycling" /repo/vllm/benchmarks/kernels/benchmark_w8a8_block_fp8.py \
+                && echo "WARNING: fix markers present" || echo "no flush/cycling markers -> unfixed, as intended"
+              echo ""
+
+              cat > /repo/driver.py <<'DRIVER_EOF'
+              """Runs the UNMODIFIED tuning script over gate_up_proj only, full 18-M sweep.
+
+              get_weight_shapes() is the single thing overridden. main() resolves it in
+              the parent process and passes the result through process_args, so the
+              override survives mp.Pool's spawn. tune()/benchmark_config() are untouched.
+              """
+              import argparse
+              import importlib.util
+              import json
+              import sys
+
+              spec = importlib.util.spec_from_file_location(
+                  "benchmark_w8a8_block_fp8",
+                  "/repo/vllm/benchmarks/kernels/benchmark_w8a8_block_fp8.py",
+              )
+              mod = importlib.util.module_from_spec(spec)
+              sys.modules[spec.name] = mod
+              spec.loader.exec_module(mod)
+
+              GATE_UP_PROJ = [(17408, 5120)]
+              mod.get_weight_shapes = lambda tp_size: GATE_UP_PROJ
+
+              if __name__ == "__main__":
+                  args = argparse.Namespace(
+                      tp_size=2,
+                      input_type="fp8",
+                      out_dtype="bfloat16",
+                      block_n=128,
+                      block_k=128,
+                      batch_size=None,          # <- FULL 18-M sweep, the whole point
+                      save_path="/repo/original-tuned-configs",
+                  )
+                  mod.main(args)
+
+                  path = ("/repo/original-tuned-configs/N=17408,K=5120,"
+                          "device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json")
+                  with open(path) as f:
+                      cfgs = json.load(f)
+                  print("\n=== CONFIG_JSON_BEGIN gate_up_proj ===", flush=True)
+                  print(json.dumps(cfgs, indent=2), flush=True)
+                  print("=== CONFIG_JSON_END gate_up_proj ===", flush=True)
+                  print("\n=== GROUP_SIZE_M by M ===", flush=True)
+                  for m in sorted(cfgs, key=int):
+                      print(f"  M={m:>5}: GROUP_SIZE_M={cfgs[m]['GROUP_SIZE_M']:>3}   {cfgs[m]}",
+                            flush=True)
+              DRIVER_EOF
+
+              python3 /repo/driver.py
+
+              echo "=== final file listing ==="
+              ls -la /repo/original-tuned-configs
+              echo "=== done, sleeping so data can be copied out ==="
+              sleep infinity
+      volumes:
+        - name: repo
+          emptyDir: {}

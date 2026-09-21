@@ -1,0 +1,33 @@
+=== group_size_m_single_m.py results ===
+M=1024, gate_up_proj (N=17408, K=5120). ONE A/B pair for the entire
+script, allocated once, never touched by any other M. Round-robins ONLY
+across the 4 GROUP_SIZE_M candidates {1,16,32,64} (no cross-M switching
+at all). 32 repeats x 50 iters/block = 1600 iterations/condition (double
+group_size_m_exhaustive.py's per-condition sample size).
+
+base_config (M=1024) = tuner's actual winning BLOCK_SIZE_M/N/K, num_warps,
+num_stages for this M, varying only GROUP_SIZE_M.
+
+=== Results: mean +/- stderr (us) ===
+  GROUP_SIZE_M=  1:   597.62 +/-  3.35 us  (n=32 blocks x 50 iters)
+  GROUP_SIZE_M= 16:   586.68 +/-  2.50 us  (n=32 blocks x 50 iters)
+  GROUP_SIZE_M= 32:   590.63 +/-  2.54 us  (n=32 blocks x 50 iters)
+  GROUP_SIZE_M= 64:   594.85 +/-  2.65 us  (n=32 blocks x 50 iters)
+
+Winner: GROUP_SIZE_M=16
+GROUP_SIZE_M=1 vs winner: +1.87%
+
+Significance check: combined SE(GM=1, GM=16) = sqrt(3.35^2 + 2.50^2) =
+4.18us. Gap = 597.62 - 586.68 = 10.94us = ~2.6x combined SE -- outside
+the same rough 2*SE band used elsewhere in this investigation, i.e. a
+real (if modest) effect, not noise.
+
+Cross-check against the other two measurements at M=1024:
+  group_size_m_exhaustive.py (18-M cross-M round-robin): GROUP_SIZE_M=1 WINS by 5.7%
+  group_size_m_single_m.py   (single-M round-robin, this file):  GROUP_SIZE_M=1 LOSES by 1.87%
+  ncu_probe.py     (single-M, no round-robin, deep pre-warm):    GROUP_SIZE_M=1 LOSES by ~11.8%
+
+Direction matches ncu, not the exhaustive sweep. Magnitude sits between
+the two, consistent with residual (lighter) contamination from switching
+between differently-compiled GROUP_SIZE_M kernels every block, even with
+the tensors themselves held fixed and never evicted by another M.

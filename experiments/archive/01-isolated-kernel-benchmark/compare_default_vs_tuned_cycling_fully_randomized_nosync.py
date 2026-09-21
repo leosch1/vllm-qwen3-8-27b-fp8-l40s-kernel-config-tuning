@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""
+Fully-randomized default-vs-tuned comparison, cache-cycling variant, WITH
+PER-ITERATION SYNCHRONIZATION REMOVED. Every prior script in this project
+(all the way back to exp01's original compare_default_vs_tuned.py, vendored
+verbatim from vLLM's own tuner benchmark_config()) calls
+torch.accelerator.synchronize() before EVERY kernel launch -- forcing the
+GPU to fully drain and the host to catch up between every single call. Real
+serving never does this: a decode step is captured as a CUDA graph and
+replayed as dozens-to-hundreds of kernels back-to-back on one stream with
+ZERO host synchronization in between, so the GPU's command queue stays
+full and residual L2 state from one kernel is still "hot" when the next
+starts. This tests whether that difference -- not concurrency, not order,
+not cross-shape mixing (all separately ruled out or found insufficient) --
+is what's been missing.
+
+Design: identical fully-randomized, cross-shape, cache-cycling launch
+sequence as compare_default_vs_tuned_cycling_fully_randomized.py (700,000
+launches, 5 shapes x 35 M-points x 2 configs x 2000 iterations, uniformly
+random weight-copy per launch). The only change: each launch records a
+start/end CUDA event pair WITHOUT synchronizing after it -- launches queue
+back-to-back on the stream -- and a single torch.accelerator.synchronize()
+happens only once, after all 700,000 launches are queued. Per-launch
+durations are then read out via event.elapsed_time() once everything has
+completed. Also reuses one pre-allocated output buffer per (shape, M)
+point instead of allocating a fresh tensor per launch (removing allocator
+overhead/growth as a confound while running this far ahead of the GPU).
+
+Same 175-point grid, same DEFAULT_CONFIG and tuned-configs/ lookup, same
+NUM_ITERS=2000, same /10 parity scaling as every other script here.
+"""
+
+import json
+import random
+import statistics
+
+import torch
+
+from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+    _w8a8_triton_block_scaled_mm,
+)
+from vllm.triton_utils import triton
+from vllm.utils.platform_utils import get_device_name_as_file_name
+
+
+def w8a8_block_matmul_into(A, B, As, Bs, C, block_size, config):
+    block_n, block_k = block_size[0], block_size[1]
+    M = A.numel() // A.shape[-1]
+    N, K = B.shape
+
+    def grid(META):
+        return (triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),)
+
+    kernel = _w8a8_triton_block_scaled_mm
+    kernel[grid](
+        A, B, C, As, Bs, M, N, K, block_n, block_k,
+        A.stride(-2), A.stride(-1),
+        B.stride(1), B.stride(0),
+        C.stride(-2), C.stride(-1),
+        As.stride(-2), As.stride(-1),
+        Bs.stride(1), Bs.stride(0),
+        **config,
+    )
+
+
+DEFAULT_CONFIG = {
+    "BLOCK_SIZE_M": 64,
+    "BLOCK_SIZE_N": 128,
+    "BLOCK_SIZE_K": 128,
+    "GROUP_SIZE_M": 32,
+    "num_warps": 4,
+    "num_stages": 2,
+}
+
+BLOCK_N, BLOCK_K = 128, 128
+OUT_DTYPE = torch.bfloat16
+NUM_ITERS = 2000
+N_WEIGHT_COPIES = 64
+TUNED_DIR = "/tmp/tuned-configs"
+
+SHAPES = {
+    "gate_up_proj": (17408, 5120),
+    "in_proj_qkvz": (8192, 5120),
+    "qkv_proj": (7168, 5120),
+    "down_proj": (5120, 8704),
+    "out_proj": (5120, 3072),
+}
+
+BATCH_SIZES = [1, 2, 4, 8, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024, 1536, 2048, 3072, 4096]
+HELD_OUT_BATCH_SIZES = [3, 6, 12, 20, 28, 40, 56, 80, 112, 160, 200, 384, 768, 1280, 1792, 2560, 3584]
+
+
+def make_A(M, K, block_k):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    A_fp32 = (torch.rand(M, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    A = A_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    k_tiles = (K + block_k - 1) // block_k
+    As = torch.rand(M, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+    return A, As
+
+
+def make_B_copies(N, K, block_n, block_k, count):
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    n_tiles = (N + block_n - 1) // block_n
+    k_tiles = (K + block_k - 1) // block_k
+    copies = []
+    for _ in range(count):
+        B_fp32 = (torch.rand(N, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+        B = B_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+        Bs = torch.rand(n_tiles, k_tiles, dtype=torch.float32, device="cuda") * 1e-2
+        copies.append((B, Bs))
+    return copies
+
+
+def main():
+    torch.cuda.init()
+    device_name = get_device_name_as_file_name()
+
+    points = [(M, "anchor") for M in BATCH_SIZES] + [(M, "held-out") for M in HELD_OUT_BATCH_SIZES]
+    points.sort()
+
+    print("=== allocating tensors for all shapes (incl. reused output buffers) ===")
+    shape_data = {}
+    for shape, (N, K) in SHAPES.items():
+        with open(f"{TUNED_DIR}/N={N},K={K},device_name={device_name},dtype=fp8_w8a8,block_shape=[{BLOCK_N},{BLOCK_K}].json") as f:
+            tuned_cfgs = {int(k): v for k, v in json.load(f).items()}
+        anchors = sorted(tuned_cfgs)
+
+        copies = make_B_copies(N, K, BLOCK_N, BLOCK_K, N_WEIGHT_COPIES)
+        a_by_m = {}
+        c_by_m = {}
+        nearest_by_m = {}
+        for M, _ptype in points:
+            nearest = min(anchors, key=lambda x: abs(x - M))
+            nearest_by_m[M] = nearest
+            a_by_m[M] = make_A(M, K, BLOCK_K)
+            c_by_m[M] = torch.empty((M, N), dtype=OUT_DTYPE, device="cuda")  # reused output buffer, never reallocated
+        shape_data[shape] = {
+            "N": N, "K": K, "copies": copies, "a_by_m": a_by_m, "c_by_m": c_by_m,
+            "nearest_by_m": nearest_by_m, "tuned_cfgs": tuned_cfgs,
+        }
+        print(f"  {shape}: N={N}, K={K}, {len(copies)} B-copies, {len(a_by_m)} A/C tensors allocated")
+    torch.accelerator.synchronize()
+    print(f"GPU memory allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+
+    print("=== warmup: compiling every distinct kernel variant (synchronized, not timed) ===")
+    for shape, sd in shape_data.items():
+        for M, _ptype in points:
+            A, As = sd["a_by_m"][M]
+            C = sd["c_by_m"][M]
+            nearest = sd["nearest_by_m"][M]
+            B, Bs = sd["copies"][0]
+            for cfg in (DEFAULT_CONFIG, sd["tuned_cfgs"][nearest]):
+                w8a8_block_matmul_into(A, B, As, Bs, C, [BLOCK_N, BLOCK_K], cfg)
+    torch.accelerator.synchronize()
+    print("warmup done")
+
+    print("=== building and shuffling the full launch sequence ===")
+    work = []
+    for shape in SHAPES:
+        for M, _ptype in points:
+            for config_name in ("default", "tuned"):
+                work.extend([(shape, M, config_name)] * NUM_ITERS)
+    random.shuffle(work)
+    print(f"total launches: {len(work)}")
+
+    print("=== queuing fully-randomized sequence, NO per-iteration sync ===")
+    events = []  # (shape, M, config_name, start_event, end_event)
+    for i, (shape, M, config_name) in enumerate(work):
+        sd = shape_data[shape]
+        A, As = sd["a_by_m"][M]
+        C = sd["c_by_m"][M]
+        nearest = sd["nearest_by_m"][M]
+        cfg = DEFAULT_CONFIG if config_name == "default" else sd["tuned_cfgs"][nearest]
+        B, Bs = sd["copies"][random.randrange(N_WEIGHT_COPIES)]
+
+        start_event = torch.Event(enable_timing=True)
+        end_event = torch.Event(enable_timing=True)
+        start_event.record()
+        w8a8_block_matmul_into(A, B, As, Bs, C, [BLOCK_N, BLOCK_K], cfg)
+        end_event.record()
+        events.append((shape, M, config_name, start_event, end_event))
+
+        if (i + 1) % 100000 == 0:
+            print(f"  {i + 1}/{len(work)} launches queued")
+
+    print("=== all launches queued -- single final synchronize ===")
+    torch.accelerator.synchronize()
+    print("synchronized -- reading out per-launch durations")
+
+    results = {}
+    for shape, M, config_name, start_event, end_event in events:
+        dur_ms = start_event.elapsed_time(end_event)
+        results.setdefault((shape, M, config_name), []).append(dur_ms)
+
+    print()
+    for shape in SHAPES:
+        print(f"\n### {shape}, cache-cycling, fully-randomized, NO PER-ITERATION SYNC")
+        print("| M | type | nearest anchor | default (us) | tuned (us) | speedup |")
+        print("|---:|---|---:|---:|---:|---:|")
+        for M, ptype in points:
+            nearest = shape_data[shape]["nearest_by_m"][M]
+            d_lat = results[(shape, M, "default")]
+            t_lat = results[(shape, M, "tuned")]
+            d_us = statistics.mean(l * 1000.0 / 10 for l in d_lat)
+            t_us = statistics.mean(l * 1000.0 / 10 for l in t_lat)
+            speedup = (d_us - t_us) / d_us * 100
+            print(f"| {M} | {ptype} | {nearest} | {d_us:.2f} | {t_us:.2f} | {speedup:+.1f}% |")
+
+
+if __name__ == "__main__":
+    main()

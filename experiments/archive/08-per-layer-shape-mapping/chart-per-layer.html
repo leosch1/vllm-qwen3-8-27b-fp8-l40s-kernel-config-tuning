@@ -1,0 +1,237 @@
+<title>GEMM Durations Per Model Layer</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #d9534f;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #d9534f;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 960px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 760px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 30px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; max-width: 760px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 10px; font-size: 12.5px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.swatch.sq { width: 10px; height: 10px; border-radius: 2px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.callout {
+  border-left: 3px solid var(--s2); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout.warn { border-left-color: var(--s4); }
+.callout b { color: var(--text-primary); }
+.layer-panel { margin-top: 26px; padding: 14px 16px; background: var(--surface-2); border-radius: 8px; }
+.layer-panel.flagged { outline: 1.5px solid var(--s4); }
+.layer-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.layer-name { font-size: 13px; font-weight: 600; }
+.layer-speedup { font-size: 12.5px; font-weight: 600; }
+.layer-speedup.pos { color: var(--s3); }
+.layer-speedup.neg { color: var(--s4); }
+.layer-meta { font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; }
+.summary-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 4px; }
+.summary-tile { flex: 1 1 200px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.summary-tile .name { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.summary-tile .val { font-size: 18px; font-weight: 700; }
+.summary-tile .val.pos { color: var(--s3); }
+.summary-tile .val.neg { color: var(--s4); }
+.summary-tile .sub2 { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+</style>
+
+<div class="viz-root">
+  <h1>GEMM launch durations, split by model layer (weight shape)</h1>
+  <p class="sub">Every real captured <code>_w8a8_triton_block_scaled_mm</code> launch (from the 150-prompt, c=64 GPU-metrics captures) reverse-mapped from its launch grid/block dimensions back to which of the model's 5 W8A8 weight matrices it belongs to &mdash; each a distinct FFN/MoE layer type. N=17408, N=8192, and N=7168 are each uniquely identifiable at any batch size. N=5120 covers <i>two</i> weight matrices (K=3072 and K=8704) that share the same N &mdash; default's config formula can never tell them apart (it doesn't depend on N/K at all), and tuned only can ~61% of the time, so both are merged into one <b>N=5120 (combined)</b> bucket here for a fair apples-to-apples comparison. ~3.5% of launches per config landed on a genuinely ambiguous grid signature and are excluded from every bucket below.</p>
+
+  <div class="summary-row" id="summary-tiles"></div>
+
+  <div class="callout">Per-layer proportions are nearly identical between configs (e.g. N=5120: 47.46% of default's launches vs. 47.52% of tuned's) &mdash; direct confirmation that both captures really are doing comparable logical work, the concern that originally motivated this breakdown.</div>
+  <div class="callout warn"><b>N=17408 is the outlier.</b> Every other layer gets faster under tuning (+5.4% to +23.4%) &mdash; but N=17408, the exact shape this whole GPU-metrics investigation has been chasing (it's where the &ge;2000&micro;s slow cluster lives), gets <b>21.6% slower</b> on average. This is the layer actually responsible for tuned's c=64 regression; the other three layers are pure wins that the N=17408 regression outweighs in aggregate.</div>
+
+  <div id="layer-panels"></div>
+</div>
+
+<script>
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+function bindTooltip(el, htmlFn) {
+  el.addEventListener('mouseenter', () => { tooltip.innerHTML = htmlFn(); tooltip.style.opacity = 1; });
+  el.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+}
+
+function niceLogTicks(lo, hi) {
+  const candidates = [10,20,30,50,75,100,150,200,300,500,750,1000,1500,2000,3000,5000];
+  return candidates.filter(v => v >= lo && v <= hi);
+}
+
+const LAYER_DATA = {"N=17408": {"bins": [135.6, 140.5, 145.4, 150.6, 156.0, 161.5, 167.2, 173.1, 179.3, 185.7, 192.2, 199.1, 206.1, 213.4, 221.0, 228.9, 237.0, 245.4, 254.1, 263.1, 272.5, 282.1, 292.1, 302.5, 313.2, 324.3, 335.9, 347.8, 360.1, 372.9, 386.1, 399.8, 414.0, 428.7, 443.9, 459.7, 476.0, 492.9, 510.4, 528.5, 547.2, 566.6, 586.7, 607.6, 629.1, 651.4, 674.6, 698.5, 723.3, 748.9, 775.5, 803.0, 831.5, 861.0, 891.6, 923.2, 956.0, 989.9, 1025.0, 1061.4, 1099.1, 1138.1, 1178.5, 1220.3, 1263.6, 1308.4, 1354.8, 1402.9, 1452.7, 1504.3, 1557.6, 1612.9, 1670.1, 1729.4, 1790.8, 1854.3, 1920.1, 1988.2, 2058.8, 2131.9], "default_pct": [0.002, 21.951, 1.442, 0.179, 0.036, 0.271, 15.888, 8.716, 43.386, 1.956, 0.002, 0.0, 0.0, 0.0, 0.0, 0.0, 0.026, 0.038, 0.04, 0.028, 0.171, 0.195, 0.016, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.006, 0.133, 0.118, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.028, 1.996, 2.374, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "tuned_pct": [8.181, 15.079, 0.233, 0.122, 0.269, 15.051, 7.994, 16.327, 28.944, 0.721, 0.0, 0.0, 0.0, 0.1, 0.237, 0.349, 0.201, 0.189, 0.038, 0.066, 0.022, 0.01, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.002, 0.076, 0.177, 0.004, 0.058, 0.191, 0.002, 0.0, 0.0, 0.0, 0.02, 0.078, 0.179, 0.134, 0.69, 1.562, 2.695], "default_n": 49792, "tuned_n": 50176, "default_mean": 225.2, "tuned_mean": 273.8, "default_median": 179.8, "tuned_median": 176.5}, "N=8192": {"bins": [61.6, 63.3, 65.2, 67.1, 69.0, 71.0, 73.1, 75.2, 77.3, 79.6, 81.9, 84.3, 86.7, 89.2, 91.8, 94.4, 97.2, 100.0, 102.9, 105.8, 108.9, 112.0, 115.3, 118.6, 122.1, 125.6, 129.2, 133.0, 136.8, 140.8, 144.8, 149.0, 153.3, 157.8, 162.3, 167.0, 171.9, 176.8, 181.9, 187.2, 192.6, 198.2, 203.9, 209.8, 215.9, 222.1, 228.6, 235.2, 242.0, 249.0, 256.2, 263.6, 271.2, 279.0, 287.1, 295.4, 304.0, 312.8, 321.8, 331.1, 340.7, 350.5, 360.7, 371.1, 381.8, 392.9, 404.2, 415.9, 428.0, 440.3, 453.1, 466.2, 479.7, 493.5, 507.8, 522.5, 537.6, 553.2, 569.2, 585.6], "default_pct": [0.0, 0.0, 0.0, 1.462, 13.224, 12.207, 18.537, 20.4, 19.13, 6.078, 1.733, 0.016, 0.092, 1.354, 0.054, 0.003, 0.011, 0.016, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.003, 0.019, 0.062, 0.065, 0.089, 0.067, 0.143, 0.07, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.024, 0.105, 0.086, 0.043, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.086, 0.38, 0.051, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.822, 2.568], "tuned_pct": [12.256, 12.801, 20.103, 5.786, 1.412, 3.957, 4.967, 17.904, 13.018, 1.581, 0.008, 0.016, 0.005, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.003, 0.086, 0.18, 0.132, 0.107, 0.142, 0.223, 0.158, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.013, 0.217, 0.027, 0.0, 0.0, 0.0, 0.0, 0.0, 0.003, 0.099, 0.126, 0.03, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.081, 3.036, 1.522, 0.0, 0.0, 0.0], "default_n": 37152, "tuned_n": 37248, "default_mean": 99.0, "tuned_mean": 93.0, "default_median": 75.9, "tuned_median": 67.6}, "N=7168": {"bins": [53.9, 55.3, 56.7, 58.2, 59.6, 61.2, 62.7, 64.3, 66.0, 67.7, 69.4, 71.2, 73.0, 74.8, 76.8, 78.7, 80.7, 82.8, 84.9, 87.1, 89.3, 91.6, 93.9, 96.3, 98.8, 101.3, 103.9, 106.6, 109.3, 112.1, 114.9, 117.9, 120.9, 124.0, 127.1, 130.4, 133.7, 137.1, 140.6, 144.2, 147.9, 151.7, 155.6, 159.5, 163.6, 167.8, 172.1, 176.5, 181.0, 185.6, 190.4, 195.2, 200.2, 205.3, 210.6, 216.0, 221.5, 227.1, 232.9, 238.9, 245.0, 251.2, 257.7, 264.2, 271.0, 277.9, 285.0, 292.3, 299.8, 307.4, 315.3, 323.3, 331.6, 340.1, 348.8, 357.7, 366.8, 376.2, 385.8, 395.7], "default_pct": [0.0, 0.0, 0.0, 0.0, 0.034, 2.431, 12.051, 2.608, 9.273, 29.607, 16.904, 13.999, 10.036, 1.702, 0.034, 0.169, 0.059, 0.008, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.025, 0.025, 0.059, 0.059, 0.025, 0.042, 0.051, 0.051, 0.102, 0.085, 0.017, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.076, 0.076, 0.068, 0.042, 0.008, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.017, 0.11, 0.11, 0.034, 0.0, 0.0, 0.0], "tuned_pct": [0.49, 1.461, 13.412, 14.738, 4.679, 3.032, 2.154, 2.736, 16.858, 28.547, 10.152, 0.118, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.068, 0.194, 0.093, 0.177, 0.093, 0.144, 0.279, 0.034, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.11, 0.144, 0.017, 0.0, 0.0, 0.0, 0.0, 0.0, 0.27], "default_n": 11808, "tuned_n": 11840, "default_mean": 70.6, "tuned_mean": 66.8, "default_median": 68.8, "tuned_median": 67.0}, "N=5120": {"bins": [24.2, 25.2, 26.3, 27.3, 28.5, 29.6, 30.9, 32.1, 33.5, 34.8, 36.3, 37.8, 39.3, 40.9, 42.6, 44.4, 46.2, 48.1, 50.1, 52.1, 54.3, 56.5, 58.8, 61.3, 63.8, 66.4, 69.1, 72.0, 75.0, 78.0, 81.3, 84.6, 88.1, 91.7, 95.5, 99.4, 103.5, 107.8, 112.2, 116.8, 121.6, 126.6, 131.9, 137.3, 142.9, 148.8, 154.9, 161.3, 168.0, 174.9, 182.1, 189.6, 197.4, 205.5, 214.0, 222.8, 231.9, 241.5, 251.4, 261.8, 272.6, 283.8, 295.5, 307.6, 320.3, 333.5, 347.2, 361.5, 376.4, 391.9, 408.0, 424.8, 442.3, 460.5, 479.4, 499.2, 519.7, 541.1, 563.4, 586.6], "default_pct": [0.0, 0.0, 0.0, 0.0, 0.0, 5.939, 6.348, 1.717, 4.789, 3.656, 1.95, 0.114, 0.164, 0.14, 0.612, 1.93, 4.135, 5.6, 6.168, 4.718, 1.269, 0.08, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.008, 0.022, 0.715, 11.53, 0.105, 0.05, 0.032, 0.219, 0.8, 4.381, 6.097, 4.216, 18.479, 2.764, 0.045, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.015, 0.146, 0.347, 0.159, 0.004, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.535], "tuned_pct": [4.002, 6.514, 4.499, 5.66, 2.775, 1.088, 0.045, 0.066, 3.076, 20.644, 0.798, 0.101, 0.024, 0.035, 0.038, 0.029, 0.003, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.045, 8.605, 3.723, 0.069, 0.06, 0.092, 0.352, 5.908, 6.818, 22.995, 0.195, 0.0, 0.0, 0.028, 0.096, 0.009, 0.003, 0.143, 0.47, 0.053, 0.005, 0.066, 0.055, 0.007, 0.0, 0.0, 0.002, 0.165, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.105, 0.029, 0.0, 0.0, 0.0, 0.0, 0.069, 0.065, 0.0, 0.0, 0.0, 0.0, 0.102, 0.165, 0.0, 0.0], "default_n": 95488, "tuned_n": 95616, "default_mean": 80.3, "tuned_mean": 61.5, "default_median": 84.5, "tuned_median": 67.8}};
+const LAYER_ORDER = ["N=17408", "N=8192", "N=7168", "N=5120"];
+const LAYER_NOTE = {
+  "N=17408": "uniquely identifiable",
+  "N=8192": "uniquely identifiable",
+  "N=7168": "uniquely identifiable",
+  "N=5120": "combined: K=3072 + K=8704, merged for apples-to-apples comparison",
+};
+
+function speedupPct(d) {
+  return (d.default_mean - d.tuned_mean) / d.default_mean * 100;
+}
+
+// --- summary tiles ---
+const summaryEl = document.getElementById('summary-tiles');
+LAYER_ORDER.forEach(layer => {
+  const d = LAYER_DATA[layer];
+  const sp = speedupPct(d);
+  const cls = sp >= 0 ? 'pos' : 'neg';
+  const tile = document.createElement('div');
+  tile.className = 'summary-tile';
+  tile.innerHTML = `
+    <div class="name">${layer}</div>
+    <div class="val ${cls}">${sp >= 0 ? '+' : ''}${sp.toFixed(1)}%</div>
+    <div class="sub2">${d.default_mean}&micro;s &rarr; ${d.tuned_mean}&micro;s mean</div>
+  `;
+  summaryEl.appendChild(tile);
+});
+
+// --- per-layer distribution panels ---
+function renderDistChart(d, containerId) {
+  const W = 880, H = 220, PAD_L = 48, PAD_R = 16, PAD_T = 14, PAD_B = 26;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const bins = d.bins;
+  const logLo = Math.log10(bins[0]), logHi = Math.log10(bins[bins.length-1]);
+  const xPos = v => PAD_L + (Math.log10(v) - logLo) / (logHi - logLo) * plotW;
+
+  const maxPct = Math.max(...d.default_pct, ...d.tuned_pct) * 1.08;
+  const yPos = v => PAD_T + plotH - (v / maxPct) * plotH;
+
+  [0, maxPct*0.25, maxPct*0.5, maxPct*0.75, maxPct].forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toFixed(1) + '%'; svg.appendChild(t);
+  });
+
+  niceLogTicks(bins[0], bins[bins.length-1]).forEach(v => {
+    const x = xPos(v);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 8); t.setAttribute('text-anchor', 'middle');
+    t.textContent = v >= 1000 ? (v/1000)+'ms' : v+'µs'; svg.appendChild(t);
+  });
+
+  function drawSeries(pctArr, color, n) {
+    for (let i = 0; i < bins.length - 1; i++) {
+      const pct = pctArr[i];
+      if (pct <= 0) continue;
+      const x0 = xPos(bins[i]), x1 = xPos(bins[i+1]);
+      const y = yPos(pct);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', x0); rect.setAttribute('y', y);
+      rect.setAttribute('width', Math.max(0.5, x1 - x0 - 0.5)); rect.setAttribute('height', PAD_T + plotH - y);
+      rect.setAttribute('fill', color); rect.setAttribute('fill-opacity', '0.55');
+      rect.style.cursor = 'pointer';
+      bindTooltip(rect, () => `<div class="row"><span class="k">range</span><b>${bins[i].toFixed(0)}&ndash;${bins[i+1].toFixed(0)}µs</b></div><div class="row"><span class="k">share</span><b>${pct.toFixed(2)}%</b></div><div class="row"><span class="k">n</span><b>${Math.round(pct/100*n).toLocaleString()}</b></div>`);
+      svg.appendChild(rect);
+    }
+  }
+  drawSeries(d.default_pct, 'var(--s1)', d.default_n);
+  drawSeries(d.tuned_pct, 'var(--s2)', d.tuned_n);
+
+  function vline(v, color, dash) {
+    const x = xPos(v);
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x); l.setAttribute('x2', x); l.setAttribute('y1', PAD_T); l.setAttribute('y2', PAD_T + plotH);
+    l.setAttribute('stroke', color); l.setAttribute('stroke-width', '1.5');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(l);
+  }
+  vline(d.default_median, 'var(--s1)', '4 3');
+  vline(d.tuned_median, 'var(--s2)', '4 3');
+  vline(d.default_mean, 'var(--s1)', null);
+  vline(d.tuned_mean, 'var(--s2)', null);
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+
+const panelsEl = document.getElementById('layer-panels');
+LAYER_ORDER.forEach((layer, idx) => {
+  const d = LAYER_DATA[layer];
+  const sp = speedupPct(d);
+  const flagged = sp < 0;
+  const panel = document.createElement('div');
+  panel.className = 'layer-panel' + (flagged ? ' flagged' : '');
+  const chartId = `chart-layer-${idx}`;
+  panel.innerHTML = `
+    <div class="layer-head">
+      <span class="layer-name">${layer}</span>
+      <span class="layer-speedup ${sp >= 0 ? 'pos' : 'neg'}">${sp >= 0 ? '+' : ''}${sp.toFixed(1)}% ${sp >= 0 ? 'faster' : 'slower'} under tuning</span>
+    </div>
+    <div class="layer-meta">${LAYER_NOTE[layer]} &middot; default n=${d.default_n.toLocaleString()}, mean ${d.default_mean}&micro;s, median ${d.default_median}&micro;s &middot; tuned n=${d.tuned_n.toLocaleString()}, mean ${d.tuned_mean}&micro;s, median ${d.tuned_median}&micro;s</div>
+    <div class="chart-wrap" id="${chartId}"></div>
+  `;
+  panelsEl.appendChild(panel);
+  renderDistChart(d, chartId);
+});
+
+// legend, once, above the panels
+const legend = document.createElement('div');
+legend.className = 'legend';
+legend.innerHTML = `
+  <div class="legend-item"><span class="swatch sq" style="background:var(--s1)"></span>default</div>
+  <div class="legend-item"><span class="swatch sq" style="background:var(--s2)"></span>tuned</div>
+  <div class="legend-item">dashed = median, solid = mean</div>
+`;
+panelsEl.parentNode.insertBefore(legend, panelsEl);
+</script>

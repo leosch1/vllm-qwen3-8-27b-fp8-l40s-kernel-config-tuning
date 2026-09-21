@@ -1,0 +1,152 @@
+# Mirrors manifests/serving-runtimes/vllm-qwen3-8-27b-fp8-gpu.yaml's args/env
+# exactly, so the only things that differ between this and production are the
+# image (pinned to the exact version tested for the PR) and, once uncommented
+# below, the tuned-config mounts -- keeping the comparison isolated to the
+# kernel config's effect.
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-qwen3-8-27b-fp8-pr-evidence-gpu
+  namespace: enterprise-ai
+  annotations:
+    opendatahub.io/apiProtocol: REST
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/template-display-name: vLLM Runtime for Qwen3.8-27B-FP8 (PR evidence, GPU)
+    openshift.io/display-name: vLLM Qwen3.8-27B-FP8 PR Evidence GPU
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  annotations:
+    opendatahub.io/kserve-runtime: vllm
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8080"
+  containers:
+  - name: kserve-container
+    # Pinned exact release cited in the PR -- not our production RHOAI image.
+    image: docker.io/vllm/vllm-openai:v0.27.1
+    # Only container-level requirement for real CUDA hardware-counter
+    # profiling, confirmed by direct A/B test on a throwaway pod (ruled out
+    # the driver-param and /dev/nvidia-caps fixes originally thought
+    # necessary too -- see git history / enterprise-ai/pr-evidence-serving
+    # for the full story). Needs the profiling-scc.yaml SA (set on
+    # inferenceservice.yaml's spec.predictor.serviceAccountName) to be
+    # permitted at all.
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add:
+        - SYS_ADMIN
+    command:
+    - python3
+    - -m
+    - vllm.entrypoints.openai.api_server
+    args:
+    - --port=8080
+    - --model=/mnt/models
+    - --served-model-name={{.Name}}
+    - --tensor-parallel-size=2
+    - --max-model-len=8192
+    - --reasoning-parser=qwen3
+    - --enable-auto-tool-choice
+    - --tool-call-parser=qwen3_coder
+    # Deliberately raised from production's --max-num-seqs=1: that setting
+    # only exists to avoid CUDA graph capture OOM on our older RHOAI image and
+    # serializes the engine to one sequence at a time, which made the
+    # high-concurrency benchmark meaningless (all requests queue behind each
+    # other regardless of client concurrency) and triggered Route timeouts.
+    # Raised from 64 -> 128 to test whether the e2e delta trend (decaying,
+    # slightly negative right at concurrency=64) continues past the point
+    # where --max-num-seqs=64 was hard-capping decode batch size (confirmed:
+    # scheduler.py asserts len(self.running) <= max_num_seqs). Matches the
+    # client sweep's new top end. If this OOMs on v0.27.1, lower it and the
+    # client sweep's top concurrency to match.
+    - --max-num-seqs=128
+    # Diagnostic only, not part of the PR evidence: disables CUDA graph
+    # capture/replay so the W8A8 call-plan recorder's "one Python invocation
+    # == one executed kernel" assumption holds -- graph replay skips the
+    # Python dispatch path entirely (confirmed earlier this investigation:
+    # the M-histogram counter only sees eager-path calls, never replays).
+    # This changes decode performance substantially; only use captures taken
+    # with this flag to compare call SEQUENCES/SHAPES between configs, never
+    # for timing conclusions.
+    - --enforce-eager
+    env:
+    - name: HF_HOME
+      value: /tmp/hf_home
+    - name: PYTORCH_CUDA_ALLOC_CONF
+      value: expandable_segments:True
+    # Diagnostic only: opt-in W8A8 logical call-plan recorder (see
+    # fp8-utils-instrumented ConfigMap). RUN_ID must differ between the
+    # default-config and tuned-config passes -- change it (and the PATH's
+    # filename) to "tuned" for PASS 2, then `oc apply` again to roll the pod.
+    - name: VLLM_W8A8_CALL_PLAN_PATH
+      value: /tmp/w8a8-default.jsonl
+    - name: VLLM_W8A8_CALL_PLAN_RUN_ID
+      value: default
+    # OpenShift assigns an arbitrary UID with no /etc/passwd entry, so $HOME
+    # defaults to "/" -- some import paths try to os.makedirs("$HOME/.cache/...")
+    # and fail with PermissionError otherwise (hit this already on the
+    # kernel-benchmark evidence Job).
+    - name: HOME
+      value: /tmp
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+    # Pod's default /dev/shm is only 64Mi; this vllm version's TP=2 engine-core
+    # IPC (ShmRingBuffer) needs 160Mi+, so it fails at startup with
+    # "Insufficient space in /dev/shm" otherwise. Not needed on our production
+    # RHOAI image/vllm version, which apparently uses a smaller buffer.
+    #
+    # PASS 1 (default config): leave the dense-tuned-configs entries below
+    # commented out. PASS 2 (tuned config): uncomment them, then
+    # `oc apply -f servingruntime.yaml` again to roll the pod. Path differs
+    # from production's RHOAI image (/opt/app-root/lib64/python3.12/site-packages/...)
+    # -- confirmed via a throwaway diagnostic pod against this exact image.
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: shm
+    # Diagnostic only, not part of the PR evidence: overlays fp8_utils.py with
+    # a version that counts real (N,K,M) calls to w8a8_triton_block_scaled_mm
+    # and dumps them to /tmp/m_histogram.json every 3s. Remove this mount once
+    # done -- it's not meant to stay on the evidence-gathering runtime.
+    - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/fp8_utils.py
+      name: fp8-utils-instrumented
+      subPath: fp8_utils.py
+      readOnly: true
+    # PASS 1 (default): commented out below. PASS 2 (tuned): uncomment, then
+    # `oc apply -f servingruntime.yaml` again to roll the pod.
+    # - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   name: dense-tuned-configs
+    #   subPath: N=17408,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   readOnly: true
+    # - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   name: dense-tuned-configs
+    #   subPath: N=8192,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   readOnly: true
+    # - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   name: dense-tuned-configs
+    #   subPath: N=7168,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   readOnly: true
+    # - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   name: dense-tuned-configs
+    #   subPath: N=5120,K=8704,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   readOnly: true
+    # - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   name: dense-tuned-configs
+    #   subPath: N=5120,K=3072,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+    #   readOnly: true
+  multiModel: false
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 2Gi
+  - name: dense-tuned-configs
+    persistentVolumeClaim:
+      claimName: qwen3-8-27b-fp8-dense-v0271-configs
+  - name: fp8-utils-instrumented
+    configMap:
+      name: fp8-utils-instrumented
+  supportedModelFormats:
+  - autoSelect: true
+    name: vLLM

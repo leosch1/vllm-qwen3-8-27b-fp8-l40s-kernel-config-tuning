@@ -1,0 +1,5 @@
+*.nsys-rep
+*.sqlite
+*.npz
+.nsight-cli/
+.DS_Store

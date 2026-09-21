@@ -1,0 +1,556 @@
+<title>GEMM Mechanism Results</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 960px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; max-width: 760px; }
+.panel-title { font-size: 13px; color: var(--text-primary); font-weight: 600; margin: 30px 0 2px; }
+.panel-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; max-width: 760px; }
+.legend { display: flex; gap: 16px; align-items: center; margin: 4px 0 10px; font-size: 12.5px; flex-wrap: wrap; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.swatch.sq { width: 10px; height: 10px; border-radius: 2px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.axis-text-strong { fill: var(--text-secondary); font-size: 10.5px; font-weight: 600; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+.callout {
+  border-left: 3px solid var(--s2); background: var(--surface-2);
+  padding: 10px 14px; border-radius: 0 6px 6px 0; font-size: 12.5px;
+  color: var(--text-secondary); margin: 14px 0 0;
+}
+.callout b { color: var(--text-primary); }
+.excluded-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+</style>
+
+<div class="viz-root">
+  <h1>GEMM mechanism: why tuned regresses at high concurrency</h1>
+  <p class="sub">Built from the real hardware-counter (nsys) captures and the python-level dispatch histograms gathered across 8 measured pod instances (default/tuned &times; concurrency 1/64 &times; 2 replicate instances each). Full raw data, per-run <code>kernel_summary.csv</code> / <code>bench-result.txt</code> / <code>capture.nsys-rep</code> in <code>pr-evidence-serving/profiling-results/</code>.</p>
+
+  <div class="panel-title">GEMM launch count, mean duration, and total time &mdash; all 8 measured instances</div>
+  <div class="panel-sub">One bar per measured pod instance, grouped by concurrency (3 instances per group: default's one reliable instance, tuned's two). <code>default, instance A</code> &mdash; the very first capture of this whole investigation &mdash; is omitted throughout this page: a tracer-decomposition artifact inflated its GEMM launch count by ~11.8&ndash;128&times; relative to every other instance measured since, confirmed unrelated to config (see profiling-results/README.md). Hover any bar for exact values.</div>
+  <div class="legend" id="legend-metrics"></div>
+  <div class="two-col">
+    <div>
+      <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">Launch count</div>
+      <div class="chart-wrap" id="chart-count"></div>
+    </div>
+    <div>
+      <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">Mean duration / launch (&micro;s)</div>
+      <div class="chart-wrap" id="chart-mean"></div>
+    </div>
+  </div>
+  <div style="margin-top:18px;">
+    <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">Total GEMM GPU-time (s)</div>
+    <div class="chart-wrap" id="chart-sum"></div>
+  </div>
+  <div class="callout">Within the reliable instances, <b>launch count barely moves</b> between configs at a given concurrency (536k&ndash;540k at c=64; exactly 1,310,720 at c=1, all three). What moves is <b>mean duration</b> &mdash; and it moves in <b>opposite directions</b> by concurrency: tuned is ~2.6% slower per launch at c=64, but ~27% faster per launch at c=1. That sign flip, not any change in how much work happens, is the whole story.</div>
+
+  <div class="panel-title">What actually changes: per-kernel GPU-time delta (tuned &minus; default)</div>
+  <div class="panel-sub">Every kernel with &ge;50ms of default-config time, sorted by |delta|, tuned averaged across its 2 instances vs. default's reliable instance. Note the x-axis range on each panel &mdash; GEMM's bar is drawn at the same pixel scale as every other kernel's, it's just that much bigger.</div>
+  <div class="legend" id="legend-delta"></div>
+  <div class="two-col">
+    <div>
+      <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64</div>
+      <div class="chart-wrap" id="chart-delta64"></div>
+    </div>
+    <div>
+      <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1</div>
+      <div class="chart-wrap" id="chart-delta1"></div>
+    </div>
+  </div>
+  <div class="callout">At c=64, GEMM's <b>+2,187.6ms</b> delta is over <b>11&times;</b> larger than the next-biggest kernel's delta (silu_and_mul, &minus;189.5ms) &mdash; and the others don't even agree on direction. At c=1, GEMM's <b>&minus;35,816.2ms</b> delta is over <b>1,000&times;</b> larger than anything else. NCCL AllReduce, the attention/linear-attention kernels, quantization kernels &mdash; none of them move meaningfully under tuned, at either concurrency. This is <b>not</b> a general "everything contends harder" effect &mdash; it's isolated almost entirely to the one kernel actually being tuned.</div>
+
+  <div class="panel-title">Same comparison, GEMM excluded</div>
+  <div class="panel-sub">Identical to the panel above but with <code>_w8a8_triton_block_scaled_mm</code> dropped from the ranking, so the scale isn't set by a bar 10&ndash;1000&times; bigger than everything else. This is what "nothing else moves" actually looks like up close.</div>
+  <div class="two-col">
+    <div>
+      <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64, GEMM excluded</div>
+      <div class="chart-wrap" id="chart-delta64-nogemm"></div>
+    </div>
+    <div>
+      <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1, GEMM excluded</div>
+      <div class="chart-wrap" id="chart-delta1-nogemm"></div>
+    </div>
+  </div>
+  <div class="callout">Even at this zoomed-in scale, nothing here is large or one-sided &mdash; deltas of a few tens of ms out of tens of thousands, roughly split between positive and negative. This is what measurement noise across two averaged instances looks like, not a real secondary effect.</div>
+
+  <div class="panel-title">Full distribution of GEMM launch durations</div>
+  <div class="panel-sub">Every real captured GEMM launch's individual duration (not just Mean/Sum), log-spaced bins, each series normalized to % of its own launch count so default and tuned are directly comparable despite slightly different totals. Dashed lines mark each series' median (typical launch); solid lines mark its mean (what actually drives total GPU-time and TPOT).</div>
+  <div class="legend" id="legend-dist"></div>
+  <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64</div>
+  <div class="chart-wrap" id="chart-dist-c64"></div>
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1</div>
+  <div class="chart-wrap" id="chart-dist-c1"></div>
+  <div class="callout">At c=64, tuned's <b>median</b> launch (77.9&micro;s) is genuinely faster than default's (86.6&micro;s) &mdash; the bulk of the distribution shifts left, confirming the isolated-benchmark speedup is real. But the <b>mean</b> lines tell the opposite story (tuned 143.1&micro;s vs. default 139.8&micro;s) precisely because of the tail: default has a real cluster of launches around 1038&ndash;1167&micro;s (1.63% of its launches); tuned has essentially none there, but an almost identically-sized cluster (1.64%) sits at 1864&ndash;2096&micro;s instead &mdash; nearly the same <i>share</i> of launches, but ~1.8&times; longer when it happens, so it overcompensates the median win rather than just offsetting it. That's the concrete mechanism behind the mean/median gap: not more slow launches, just individually much slower ones.<br><br>At c=1 there's no tail to speak of in either config, and mean and median move together &mdash; tuned's distribution sits left of default's <i>everywhere</i>, top to bottom (mean 73.3&micro;s vs. 100.6&micro;s, max 237.4&micro;s vs. 255.5&micro;s). No contention exists at c=1 to produce a tail, so nothing erodes the improvement &mdash; a clean visual confirmation of why the same config is an unambiguous win there and a mixed result at c=64.</div>
+
+  <div class="panel-title">Same distributions, finer-grained bins</div>
+  <div class="panel-sub">Identical data and axes to the panel above, 150 log-spaced bins instead of 40, for a smoother read on the distribution's real shape.</div>
+  <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64</div>
+  <div class="chart-wrap" id="chart-dist-c64-fine"></div>
+  <div class="panel-sub" style="margin-top:16px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1</div>
+  <div class="chart-wrap" id="chart-dist-c1-fine"></div>
+
+  <div class="panel-title">SM occupancy: how much of the GPU one GEMM launch actually claims</div>
+  <div class="panel-sub">Computed from real captured launch configs (grid/block dims, registers/thread), against L40S/Ada Lovelace SM limits (65,536 registers/SM, 48 max resident warps/SM, 24 max resident blocks/SM) &mdash; not a live occupancy counter, but derived directly from what each kernel actually requested at launch, weighted by how often each shape/register variant actually fired.</div>
+  <div class="legend" id="legend-occ"></div>
+  <div class="panel-sub" style="margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 64</div>
+  <div class="chart-wrap" id="chart-occ-avg"></div>
+  <div class="chart-wrap" id="chart-occ-dist" style="margin-top:6px;"></div>
+  <div class="panel-sub" style="margin-top:20px; margin-bottom:2px; font-weight:600; color:var(--text-secondary);">concurrency = 1</div>
+  <div class="chart-wrap" id="chart-occ-avg-c1"></div>
+  <div class="chart-wrap" id="chart-occ-dist-c1" style="margin-top:6px;"></div>
+  <div class="callout">At c=64, default is uniform at a flat <b>16.7%</b> occupancy (128 threads/block, 243 registers/thread); tuned's dominant case (67% of launches: 256 threads/block, 110 registers/thread) reaches <b>33.3%</b> &mdash; roughly double, split fairly evenly between the extra warps and a modest register-count drop.<br><br>At c=1, the gap is far bigger: default is still a flat 16.7%, but tuned's dominant case (99% of launches) reaches <b>83.3%</b> &mdash; <b>5&times;</b> default, not 2&times;. That can't come from doubled warps alone (warp-count doubling caps the possible gain at 2&times; on its own); it needs the register count to also collapse (224&rarr;48 registers/thread, a 4.7&times; drop) so 5 whole 8-warp blocks fit on one SM instead of 2. That register collapse traces back to a genuinely smaller tile at this M, not just more warps &mdash; the tuned config for M=1 uses <code>BLOCK_SIZE_M=16</code> against default's fixed <code>64</code>, wasting far less of the tile on a mostly-empty 1-real-row block. So <b>the warps/pipeline-stages story explains most of the occupancy gain at c=64, but not at c=1</b> &mdash; there, the smaller tile shape (and its knock-on effect on register pressure) is doing more of the real work than the warp-count doubling by itself.</div>
+
+  <div class="panel-title">GPU-busy ratio &mdash; all runs</div>
+  <div class="panel-sub">Total measured GPU kernel time &divide; (2 &times; wall-clock benchmark duration), i.e. average per-GPU utilization across the TP=2 pair.</div>
+  <div class="legend" id="legend-busy"></div>
+  <div class="chart-wrap" id="chart-busy"></div>
+  <div class="callout">Both configs sit in the same <b>~95&ndash;98% busy</b> band at <i>both</i> concurrencies &mdash; c=1 is not meaningfully less saturated than c=64. Tuned's busy ratio at c=1 (94.7&ndash;95.0%) is actually very slightly <i>lower</i> than default's (96.1%), not higher. That's the opposite of "tuned fills the GPU better" &mdash; and it makes sense once you note this metric is normalized by wall-clock time: tuned finishes the identical real work (same 1,310,720 GEMM launches) in <i>less</i> wall-clock time (67.0&ndash;67.4s vs. 85.1s), because each launch is genuinely faster (73.3&micro;s vs. 100.6&micro;s), not because it keeps the GPU occupied a larger fraction of a similarly-long window. A single decode stream (c=1) is a tight sequential dependency chain either way &mdash; there's very little true idle time to fill in <i>either</i> config, so the efficiency gain shows up as a shorter total duration, not a higher busy percentage. Busy ratio measures idle-vs-not; it doesn't measure how fast the non-idle work actually was.</div>
+</div>
+
+<script>
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+function bindTooltip(el, htmlFn) {
+  el.addEventListener('mouseenter', () => { tooltip.innerHTML = htmlFn(); tooltip.style.opacity = 1; });
+  el.addEventListener('mousemove', (e) => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  el.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+}
+
+const DATA = {"runs": {"default_A_c64": {"config": "default", "instance": "A", "concurrency": 64, "duration_s": 83.64, "tpot_ms": 72.57, "gpu_busy_pct": 42.29, "gemm_count": 45568, "gemm_mean_us": 549.568, "gemm_sum_s": 25.04269}, "default_A_c1": {"config": "default", "instance": "A", "concurrency": 1, "duration_s": 84.6, "tpot_ms": 31.74, "gpu_busy_pct": 7.93, "gemm_count": 10240, "gemm_mean_us": 130.706, "gemm_sum_s": 1.338427}, "default_B_c64": {"config": "default", "instance": "B", "concurrency": 64, "duration_s": 85.05, "tpot_ms": 73.12, "gpu_busy_pct": 97.63, "gemm_count": 536576, "gemm_mean_us": 139.788, "gemm_sum_s": 75.007111}, "default_B_c1": {"config": "default", "instance": "B", "concurrency": 1, "duration_s": 85.05, "tpot_ms": 31.9, "gpu_busy_pct": 96.1, "gemm_count": 1310720, "gemm_mean_us": 100.607, "gemm_sum_s": 131.868041}, "tuned_A_c64": {"config": "tuned", "instance": "A", "concurrency": 64, "duration_s": 87.42, "tpot_ms": 73.93, "gpu_busy_pct": 96.29, "gemm_count": 540160, "gemm_mean_us": 143.138, "gemm_sum_s": 77.317648}, "tuned_A_c1": {"config": "tuned", "instance": "A", "concurrency": 1, "duration_s": 67.39, "tpot_ms": 24.85, "gpu_busy_pct": 94.69, "gemm_count": 1310720, "gemm_mean_us": 73.283, "gemm_sum_s": 96.053973}, "tuned_B_c64": {"config": "tuned", "instance": "B", "concurrency": 64, "duration_s": 87.13, "tpot_ms": 73.82, "gpu_busy_pct": 96.27, "gemm_count": 537088, "gemm_mean_us": 143.499, "gemm_sum_s": 77.071773}, "tuned_B_c1": {"config": "tuned", "instance": "B", "concurrency": 1, "duration_s": 67.04, "tpot_ms": 24.78, "gpu_busy_pct": 95.01, "gemm_count": 1310720, "gemm_mean_us": 73.28, "gemm_sum_s": 96.049658}}, "delta64": [{"name": "_w8a8_triton_block_scaled_mm", "default_ms": 75007.1, "tuned_ms": 77194.7, "delta_ms": 2187.6}, {"name": "silu_and_mul_per_block_quant_kernel", "default_ms": 1938.3, "tuned_ms": 1748.8, "delta_ms": -189.5}, {"name": "Kernel2", "default_ms": 4775.6, "tuned_ms": 4879.6, "delta_ms": 104.0}, {"name": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL", "default_ms": 50017.2, "tuned_ms": 49960.8, "delta_ms": -56.4}, {"name": "fused_sigmoid_gating_delta_rul_19...", "default_ms": 1764.2, "tuned_ms": 1708.2, "delta_ms": -56.0}, {"name": "_causal_conv1d_fwd_kernel", "default_ms": 269.8, "tuned_ms": 240.2, "delta_ms": -29.6}, {"name": "chunk_fwd_kernel_o", "default_ms": 416.7, "tuned_ms": 441.3, "delta_ms": 24.6}, {"name": "chunk_gated_delta_rule_fwd_ker_6...", "default_ms": 386.5, "tuned_ms": 363.4, "delta_ms": -23.2}, {"name": "triton_poi_fused__to_copy__uns_8...", "default_ms": 533.6, "tuned_ms": 548.0, "delta_ms": 14.4}, {"name": "triton_red_fused__to_copy_add__10...", "default_ms": 552.0, "tuned_ms": 566.2, "delta_ms": 14.2}, {"name": "_fused_post_conv_kernel", "default_ms": 103.9, "tuned_ms": 93.3, "delta_ms": -10.5}, {"name": "triton_per_fused__to_copy_mean_7...", "default_ms": 208.3, "tuned_ms": 201.7, "delta_ms": -6.5}], "delta1": [{"name": "_w8a8_triton_block_scaled_mm", "default_ms": 131868.0, "tuned_ms": 96051.8, "delta_ms": -35816.2}, {"name": "ncclDevKernel_AllReduce_Sum_bf16_RING_LL", "default_ms": 10603.7, "tuned_ms": 10411.8, "delta_ms": -191.9}, {"name": "triton_per_fused__to_copy_mean_7...", "default_ms": 334.0, "tuned_ms": 301.3, "delta_ms": -32.7}, {"name": "triton_red_fused__to_copy_add__10...", "default_ms": 404.3, "tuned_ms": 434.3, "delta_ms": 30.1}, {"name": "triton_red_fused__to_copy_add__14...", "default_ms": 173.8, "tuned_ms": 188.1, "delta_ms": 14.3}, {"name": "triton_red_fused__to_copy_add__11...", "default_ms": 202.4, "tuned_ms": 209.6, "delta_ms": 7.2}, {"name": "triton_red_fused__to_copy_add__15...", "default_ms": 201.1, "tuned_ms": 208.3, "delta_ms": 7.2}, {"name": "silu_and_mul_per_block_quant_kernel", "default_ms": 502.7, "tuned_ms": 508.2, "delta_ms": 5.5}, {"name": "per_token_group_quant_8bit_kernel", "default_ms": 2361.6, "tuned_ms": 2366.4, "delta_ms": 4.8}, {"name": "fused_recurrent_gated_delta_ru_18...", "default_ms": 1443.8, "tuned_ms": 1448.3, "delta_ms": 4.5}, {"name": "triton_poi_fused_4", "default_ms": 248.0, "tuned_ms": 244.5, "delta_ms": -3.5}, {"name": "kernel", "default_ms": 10020.0, "tuned_ms": 10023.3, "delta_ms": 3.3}]};
+
+const OCC_DATA_C64 = {"default": {"weighted_avg": 16.7, "segments": [{"occ_pct": 16.7, "share_pct": 100.0, "count": 536576}]}, "tuned": {"weighted_avg": 28.3, "segments": [{"occ_pct": 16.7, "share_pct": 31.0, "count": 167424}, {"occ_pct": 25.0, "share_pct": 0.81, "count": 4352}, {"occ_pct": 33.3, "share_pct": 67.13, "count": 362624}, {"occ_pct": 41.7, "share_pct": 0.57, "count": 3072}, {"occ_pct": 50.0, "share_pct": 0.09, "count": 512}, {"occ_pct": 58.3, "share_pct": 0.12, "count": 640}, {"occ_pct": 66.7, "share_pct": 0.19, "count": 1024}, {"occ_pct": 83.3, "share_pct": 0.09, "count": 512}]}};
+const OCC_DATA_C1 = {"default": {"weighted_avg": 16.7, "segments": [{"occ_pct": 16.7, "share_pct": 100.0, "count": 1310720}]}, "tuned": {"weighted_avg": 82.8, "segments": [{"occ_pct": 16.7, "share_pct": 0.78, "count": 10240}, {"occ_pct": 83.3, "share_pct": 99.22, "count": 1300480}]}};
+const DIST_DATA = {"c64": {"bins": [21.8, 24.5, 27.6, 31.0, 34.8, 39.1, 44.0, 49.5, 55.6, 62.5, 70.3, 79.0, 88.8, 99.9, 112.3, 126.2, 141.9, 159.5, 179.3, 201.6, 226.6, 254.8, 286.4, 322.0, 362.0, 406.9, 457.5, 514.3, 578.2, 650.0, 730.7, 821.5, 923.5, 1038.2, 1167.1, 1312.0, 1475.0, 1658.2, 1864.1, 2095.6, 2355.9], "default_pct": [0.0, 0.0, 1.771, 3.973, 0.052, 0.374, 8.068, 8.484, 0.279, 2.975, 16.716, 8.479, 0.368, 0.081, 14.322, 3.154, 5.854, 0.998, 16.238, 1.561, 0.133, 0.214, 0.098, 0.179, 0.155, 0.262, 0.479, 2.736, 0.136, 0.03, 0.089, 0.039, 0.009, 1.631, 0.063, 0.0, 0.0, 0.0, 0.0, 0.0], "tuned_pct": [0.027, 5.811, 0.063, 2.03, 15.131, 0.059, 0.007, 0.032, 0.327, 16.607, 11.202, 0.714, 16.954, 0.016, 0.033, 1.301, 4.891, 7.365, 11.452, 0.155, 0.16, 0.068, 0.005, 0.02, 0.244, 0.537, 2.065, 0.851, 0.0, 0.0, 0.0, 0.021, 0.003, 0.0, 0.0, 0.024, 0.005, 0.107, 1.637, 0.076], "default_n": 536576, "tuned_n": 540160, "default_median": 86.6, "tuned_median": 77.9, "default_mean": 139.8, "tuned_mean": 143.1}, "c1": {"bins": [22.0, 23.4, 25.0, 26.6, 28.4, 30.2, 32.2, 34.3, 36.6, 39.0, 41.6, 44.3, 47.2, 50.3, 53.6, 57.1, 60.9, 64.9, 69.2, 73.7, 78.6, 83.8, 89.3, 95.1, 101.4, 108.1, 115.2, 122.8, 130.8, 139.4, 148.6, 158.4, 168.8, 179.9, 191.8, 204.4, 217.8, 232.1, 247.4, 263.7, 281.0], "default_pct": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.007, 0.031, 0.064, 18.525, 6.37, 0.003, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.652, 5.465, 8.499, 10.127, 12.009, 12.958, 0.092, 0.052, 0.005, 0.028, 0.069, 0.042, 13.522, 11.285, 0.0, 0.0, 0.0, 0.057, 0.122, 0.017, 0.0], "tuned_pct": [0.0, 15.453, 9.35, 0.002, 0.0, 0.0, 0.102, 0.08, 0.01, 0.003, 0.0, 0.0, 0.0, 0.0, 5.932, 0.269, 17.608, 24.523, 1.275, 0.002, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.12, 24.599, 0.472, 0.003, 0.0, 0.0, 0.0, 0.0, 0.049, 0.135, 0.011, 0.0, 0.0], "default_n": 1310720, "tuned_n": 1310720, "default_median": 99.0, "tuned_median": 67.6, "default_mean": 100.6, "tuned_mean": 73.3}};
+const DIST_DATA_FINE = {"c64": {"bins": [21.8, 22.5, 23.2, 23.9, 24.7, 25.5, 26.3, 27.1, 28.0, 28.9, 29.8, 30.7, 31.7, 32.7, 33.8, 34.8, 35.9, 37.1, 38.2, 39.5, 40.7, 42.0, 43.3, 44.7, 46.1, 47.6, 49.1, 50.6, 52.3, 53.9, 55.6, 57.4, 59.2, 61.1, 63.0, 65.0, 67.1, 69.2, 71.4, 73.7, 76.0, 78.4, 80.9, 83.5, 86.1, 88.8, 91.7, 94.6, 97.6, 100.7, 103.8, 107.1, 110.5, 114.0, 117.7, 121.4, 125.2, 129.2, 133.3, 137.5, 141.9, 146.4, 151.0, 155.8, 160.8, 165.9, 171.1, 176.5, 182.1, 187.9, 193.9, 200.0, 206.4, 212.9, 219.7, 226.6, 233.8, 241.2, 248.9, 256.8, 264.9, 273.3, 282.0, 290.9, 300.2, 309.7, 319.5, 329.6, 340.1, 350.9, 362.0, 373.5, 385.3, 397.5, 410.1, 423.1, 436.6, 450.4, 464.7, 479.4, 494.6, 510.3, 526.5, 543.2, 560.4, 578.2, 596.5, 615.4, 634.9, 655.1, 675.8, 697.3, 719.4, 742.2, 765.7, 790.0, 815.1, 840.9, 867.6, 895.1, 923.5, 952.8, 983.0, 1014.1, 1046.3, 1079.5, 1113.7, 1149.0, 1185.5, 1223.1, 1261.8, 1301.8, 1343.1, 1385.7, 1429.7, 1475.0, 1521.8, 1570.0, 1619.8, 1671.2, 1724.2, 1778.8, 1835.3, 1893.5, 1953.5, 2015.4, 2079.4, 2145.3, 2213.3, 2283.5, 2355.9], "default_pct": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.873, 3.381, 1.462, 0.019, 0.01, 0.007, 0.01, 0.013, 0.037, 0.061, 0.049, 0.085, 0.5, 1.449, 2.425, 3.101, 2.952, 3.094, 2.266, 0.929, 0.256, 0.018, 0.0, 0.007, 0.007, 0.258, 1.862, 1.683, 3.816, 3.923, 6.989, 2.547, 1.33, 3.329, 2.425, 0.324, 0.021, 0.01, 0.024, 0.032, 0.009, 0.017, 0.052, 0.519, 1.588, 7.476, 7.638, 0.108, 0.051, 0.056, 5.311, 0.439, 0.056, 0.057, 0.027, 0.045, 0.091, 10.014, 6.907, 0.038, 0.048, 0.306, 0.498, 0.524, 0.29, 0.092, 0.016, 0.019, 0.012, 0.038, 0.042, 0.082, 0.072, 0.062, 0.008, 0.002, 0.001, 0.084, 0.055, 0.04, 0.062, 0.07, 0.023, 0.0, 0.01, 0.026, 0.206, 0.039, 0.042, 0.193, 0.089, 0.515, 0.029, 0.668, 1.663, 0.041, 0.067, 0.028, 0.0, 0.01, 0.013, 0.0, 0.015, 0.014, 0.049, 0.017, 0.003, 0.021, 0.0, 0.015, 0.009, 0.0, 0.0, 0.0, 0.089, 0.696, 0.498, 0.411, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "tuned_pct": [0.0, 0.0, 0.0, 0.061, 0.805, 3.493, 1.465, 0.024, 0.014, 0.013, 0.021, 0.018, 0.013, 0.031, 1.971, 13.643, 1.399, 0.056, 0.04, 0.011, 0.019, 0.016, 0.008, 0.003, 0.001, 0.001, 0.0, 0.0, 0.0, 0.032, 0.028, 0.017, 0.076, 0.301, 0.574, 5.235, 7.583, 3.663, 1.219, 2.508, 6.467, 0.945, 0.103, 0.065, 0.068, 0.828, 14.277, 1.844, 0.008, 0.005, 0.006, 0.002, 0.0, 0.0, 0.001, 0.017, 0.101, 0.127, 0.067, 1.021, 4.7, 0.108, 0.059, 0.035, 0.077, 0.061, 1.304, 11.73, 3.992, 0.861, 0.691, 0.169, 0.007, 0.041, 0.028, 0.076, 0.038, 0.037, 0.014, 0.03, 0.014, 0.014, 0.006, 0.0, 0.0, 0.004, 0.006, 0.009, 0.006, 0.0, 0.001, 0.048, 0.156, 0.044, 0.021, 0.021, 0.264, 0.506, 0.02, 0.011, 0.904, 1.682, 0.005, 0.014, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.006, 0.013, 0.003, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.004, 0.013, 0.007, 0.0, 0.0, 0.003, 0.007, 0.015, 0.004, 0.036, 0.101, 0.456, 0.277, 0.617, 0.308, 0.0, 0.0, 0.0], "default_n": 536576, "tuned_n": 540160, "default_median": 86.6, "tuned_median": 77.9, "default_mean": 139.8, "tuned_mean": 143.1}, "c1": {"bins": [22.0, 22.4, 22.7, 23.1, 23.5, 23.9, 24.3, 24.7, 25.2, 25.6, 26.0, 26.5, 26.9, 27.4, 27.9, 28.4, 28.8, 29.3, 29.8, 30.3, 30.9, 31.4, 31.9, 32.5, 33.0, 33.6, 34.2, 34.8, 35.4, 36.0, 36.6, 37.2, 37.8, 38.5, 39.2, 39.8, 40.5, 41.2, 41.9, 42.6, 43.4, 44.1, 44.9, 45.6, 46.4, 47.2, 48.0, 48.8, 49.7, 50.5, 51.4, 52.3, 53.2, 54.1, 55.0, 55.9, 56.9, 57.9, 58.9, 59.9, 60.9, 61.9, 63.0, 64.1, 65.2, 66.3, 67.4, 68.6, 69.8, 71.0, 72.2, 73.4, 74.7, 76.0, 77.3, 78.6, 79.9, 81.3, 82.7, 84.1, 85.6, 87.0, 88.5, 90.0, 91.6, 93.1, 94.7, 96.4, 98.0, 99.7, 101.4, 103.1, 104.9, 106.7, 108.5, 110.4, 112.3, 114.2, 116.2, 118.2, 120.2, 122.2, 124.3, 126.5, 128.6, 130.8, 133.1, 135.4, 137.7, 140.0, 142.4, 144.9, 147.4, 149.9, 152.4, 155.1, 157.7, 160.4, 163.2, 166.0, 168.8, 171.7, 174.6, 177.6, 180.7, 183.8, 186.9, 190.1, 193.4, 196.7, 200.1, 203.5, 207.0, 210.5, 214.1, 217.8, 221.5, 225.3, 229.2, 233.1, 237.1, 241.2, 245.3, 249.5, 253.8, 258.1, 262.6, 267.1, 271.6, 276.3, 281.0], "default_pct": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.002, 0.005, 0.009, 0.009, 0.009, 0.007, 0.01, 0.012, 0.02, 0.072, 0.83, 4.831, 10.496, 6.591, 1.857, 0.224, 0.013, 0.001, 0.001, 0.001, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.014, 0.638, 2.369, 2.129, 0.778, 0.222, 0.123, 1.288, 4.233, 5.657, 4.368, 2.149, 0.713, 0.138, 0.018, 1.038, 10.878, 11.396, 1.499, 0.047, 0.021, 0.021, 0.023, 0.027, 0.031, 0.025, 0.01, 0.002, 0.001, 0.001, 0.001, 0.003, 0.004, 0.006, 0.009, 0.012, 0.018, 0.02, 0.018, 0.018, 0.015, 0.01, 0.006, 0.004, 0.0, 0.699, 12.82, 9.005, 2.106, 0.169, 0.004, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.006, 0.019, 0.043, 0.041, 0.031, 0.027, 0.02, 0.007, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0], "tuned_pct": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.206, 21.081, 1.499, 0.015, 0.0, 0.001, 0.0, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.009, 0.073, 0.061, 0.018, 0.008, 0.014, 0.009, 0.001, 0.0, 0.0, 0.001, 0.001, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.033, 5.341, 0.826, 0.001, 0.0, 0.0, 0.0, 0.0, 0.749, 17.701, 0.149, 0.038, 18.248, 6.434, 0.084, 0.001, 0.001, 0.003, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.003, 0.011, 0.035, 0.07, 0.089, 11.283, 13.186, 0.048, 0.412, 0.03, 0.018, 0.008, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.002, 0.012, 0.035, 0.053, 0.043, 0.024, 0.02, 0.007, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], "default_n": 1310720, "tuned_n": 1310720, "default_median": 99.0, "tuned_median": 67.6, "default_mean": 100.6, "tuned_mean": 73.3}};
+
+// default, instance A excluded entirely -- confirmed tracer-decomposition
+// artifact specific to that one capture, not a real effect (see
+// profiling-results/README.md). Not shown anywhere on this page.
+const RUN_ORDER = ["default_B_c1","tuned_A_c1","tuned_B_c1","default_B_c64","tuned_A_c64","tuned_B_c64"];
+function runColor(key) { return DATA.runs[key].config === "default" ? 'var(--s1)' : 'var(--s2)'; }
+
+function legendSwatch(container, items) {
+  const el = document.getElementById(container);
+  items.forEach(([label, color, sq]) => {
+    const item = document.createElement('div'); item.className = 'legend-item';
+    const sw = document.createElement('span'); sw.className = sq ? 'swatch sq' : 'swatch';
+    sw.style.background = color; item.appendChild(sw);
+    item.append(label);
+    el.appendChild(item);
+  });
+}
+legendSwatch('legend-metrics', [['default', 'var(--s1)'], ['tuned', 'var(--s2)']]);
+legendSwatch('legend-delta', [['tuned slower (worse)', 'var(--s2)', true], ['tuned faster (better)', 'var(--s1)', true]]);
+legendSwatch('legend-busy', [['default', 'var(--s1)'], ['tuned', 'var(--s2)']]);
+legendSwatch('legend-occ', [['default', 'var(--s1)'], ['tuned', 'var(--s2)']]);
+legendSwatch('legend-dist', [['default', 'var(--s1)'], ['tuned', 'var(--s2)']]);
+
+// ============ Panel 1: count / mean / sum bar charts across 8 runs ============
+function renderMetricChart(containerId, metricFn, fmt, opts) {
+  opts = opts || {};
+  const W = 420, H = 220, PAD_L = opts.padL || 52, PAD_R = 10, PAD_T = 10, PAD_B = 34;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const vals = RUN_ORDER.map(metricFn);
+  const maxV = Math.max(...vals) * 1.08;
+  const yPos = v => PAD_T + plotH - (v / maxV) * plotH;
+  const barW = plotW / RUN_ORDER.length * 0.6;
+  const slot = plotW / RUN_ORDER.length;
+
+  [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+    const v = maxV * f, y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = fmt(v); svg.appendChild(t);
+  });
+
+  RUN_ORDER.forEach((key, i) => {
+    const v = metricFn(key);
+    const x = PAD_L + i * slot + (slot - barW) / 2;
+    const y = yPos(v);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', barW);
+    rect.setAttribute('height', PAD_T + plotH - y); rect.setAttribute('rx', 2);
+    rect.setAttribute('fill', runColor(key)); rect.style.cursor = 'pointer';
+    bindTooltip(rect, () => {
+      const r = DATA.runs[key];
+      return `<div class="row"><span class="k">run</span><b>${r.config} ${r.instance}, c=${r.concurrency}</b></div><div class="row"><span class="k">value</span><b>${fmt(v)}</b></div>`;
+    });
+    svg.appendChild(rect);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x + barW/2); t.setAttribute('y', H - 20); t.setAttribute('text-anchor', 'middle');
+    t.textContent = `${DATA.runs[key].config[0].toUpperCase()}${DATA.runs[key].instance}`;
+    svg.appendChild(t);
+  });
+  // concurrency group labels (3 bars per group: default-B, tuned-A, tuned-B)
+  [[0,'c=1'],[3,'c=64']].forEach(([start,label]) => {
+    const x = PAD_L + (start + 1) * slot;
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text-strong');
+    t.setAttribute('x', x); t.setAttribute('y', H - 6); t.setAttribute('text-anchor', 'middle');
+    t.textContent = label; svg.appendChild(t);
+  });
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+
+renderMetricChart('chart-count', k => DATA.runs[k].gemm_count, v => v >= 1000 ? (v/1000).toFixed(0)+'k' : v.toFixed(0));
+renderMetricChart('chart-mean', k => DATA.runs[k].gemm_mean_us, v => v.toFixed(0));
+renderMetricChart('chart-sum', k => DATA.runs[k].gemm_sum_s, v => v.toFixed(0)+'s', {padL: 40});
+
+// ============ Panel 2: per-kernel delta, horizontal diverging bars ============
+function shortName(n) {
+  if (n.length > 30) return n.slice(0, 28) + '…';
+  return n;
+}
+function niceStep(maxV) {
+  const raw = maxV / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw || 1)));
+  const norm = raw / mag;
+  const mult = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return mult * mag;
+}
+function fmtMs(v) {
+  const av = Math.abs(v);
+  return av >= 1000 ? (v/1000).toFixed(av >= 10000 ? 0 : 1) + 'k' : v.toFixed(0);
+}
+function renderDeltaChart(containerId, rows) {
+  const W = 460, rowH = 26, PAD_L = 160, PAD_R = 20, PAD_T = 10, PAD_B = 22;
+  const H = rows.length * rowH + 20 + PAD_B;
+  const plotW = W - PAD_L - PAD_R;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const plotBottom = H - PAD_B;
+
+  const rawMax = Math.max(...rows.map(r => Math.abs(r.delta_ms)));
+  const step = niceStep(rawMax);
+  const maxAbs = Math.ceil(rawMax/step)*step + step*0.15;
+  const xPos = v => PAD_L + plotW/2 + (v / maxAbs) * (plotW/2);
+  const zeroX = xPos(0);
+
+  for (let v = -Math.floor(maxAbs/step)*step; v <= maxAbs; v += step) {
+    const x = xPos(v);
+    if (x < PAD_L || x > W - PAD_R) continue;
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+    gl.setAttribute('x1', x); gl.setAttribute('x2', x); gl.setAttribute('y1', PAD_T); gl.setAttribute('y2', plotBottom);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', plotBottom + 14); t.setAttribute('text-anchor', 'middle');
+    t.textContent = fmtMs(v); svg.appendChild(t);
+  }
+
+  rows.forEach((r, i) => {
+    const y = PAD_T + i * rowH;
+    const isGemm = r.name.includes('w8a8');
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('class', 'axis-text'); label.setAttribute('x', PAD_L - 8); label.setAttribute('y', y + rowH/2 + 3);
+    label.setAttribute('text-anchor', 'end');
+    if (isGemm) label.setAttribute('font-weight', '700');
+    label.setAttribute('fill', isGemm ? 'var(--text-primary)' : 'var(--text-muted)');
+    label.textContent = shortName(r.name);
+    svg.appendChild(label);
+
+    const x0 = xPos(0), x1 = xPos(r.delta_ms);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', Math.min(x0,x1)); rect.setAttribute('y', y + 4);
+    rect.setAttribute('width', Math.max(1, Math.abs(x1-x0))); rect.setAttribute('height', rowH - 10);
+    rect.setAttribute('rx', 2); rect.setAttribute('fill', r.delta_ms > 0 ? 'var(--s2)' : 'var(--s1)');
+    rect.style.cursor = 'pointer';
+    bindTooltip(rect, () => `<div class="row"><span class="k">kernel</span><b>${r.name}</b></div><div class="row"><span class="k">default</span><b>${r.default_ms.toLocaleString()}ms</b></div><div class="row"><span class="k">tuned</span><b>${r.tuned_ms.toLocaleString()}ms</b></div><div class="row"><span class="k">delta</span><b>${r.delta_ms>0?'+':''}${r.delta_ms.toLocaleString()}ms</b></div>`);
+    svg.appendChild(rect);
+  });
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderDeltaChart('chart-delta64', DATA.delta64);
+renderDeltaChart('chart-delta1', DATA.delta1);
+renderDeltaChart('chart-delta64-nogemm', DATA.delta64.filter(r => !r.name.includes('w8a8')));
+renderDeltaChart('chart-delta1-nogemm', DATA.delta1.filter(r => !r.name.includes('w8a8')));
+
+// ============ Panel 3: GPU busy ratio, all 6 runs ============
+function renderBusyChart() {
+  const W = 880, H = 220, PAD_L = 48, PAD_R = 16, PAD_T = 10, PAD_B = 34;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const maxV = 100;
+  const yPos = v => PAD_T + plotH - (v / maxV) * plotH;
+  const barW = plotW / RUN_ORDER.length * 0.55;
+  const slot = plotW / RUN_ORDER.length;
+
+  [0,20,40,60,80,100].forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v + '%'; svg.appendChild(t);
+  });
+
+  RUN_ORDER.forEach((key, i) => {
+    const r = DATA.runs[key];
+    const x = PAD_L + i * slot + (slot - barW) / 2;
+    const y = yPos(r.gpu_busy_pct);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', barW);
+    rect.setAttribute('height', PAD_T + plotH - y); rect.setAttribute('rx', 2);
+    rect.setAttribute('fill', runColor(key)); rect.style.cursor = 'pointer';
+    bindTooltip(rect, () => `<div class="row"><span class="k">run</span><b>${r.config} ${r.instance}, c=${r.concurrency}</b></div><div class="row"><span class="k">GPU busy</span><b>${r.gpu_busy_pct.toFixed(1)}%</b></div><div class="row"><span class="k">TPOT</span><b>${r.tpot_ms.toFixed(2)}ms</b></div>`);
+    svg.appendChild(rect);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x + barW/2); t.setAttribute('y', H - 20); t.setAttribute('text-anchor', 'middle');
+    t.textContent = `${r.config[0].toUpperCase()}${r.instance}`;
+    svg.appendChild(t);
+  });
+  [[0,'c=1'],[3,'c=64']].forEach(([start,label]) => {
+    const x = PAD_L + (start + 1) * slot;
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text-strong');
+    t.setAttribute('x', x); t.setAttribute('y', H - 6); t.setAttribute('text-anchor', 'middle');
+    t.textContent = label; svg.appendChild(t);
+  });
+
+  document.getElementById('chart-busy').innerHTML = '';
+  document.getElementById('chart-busy').appendChild(svg);
+}
+renderBusyChart();
+
+// ============ Panel: SM occupancy ============
+function renderOccAvgChart(occData, containerId) {
+  const W = 460, H = 150, PAD_L = 52, PAD_R = 16, PAD_T = 10, PAD_B = 26;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const maxV = Math.max(40, Math.ceil(Math.max(...Object.values(occData).map(d=>d.weighted_avg))/10)*10 + 10);
+  const yPos = v => PAD_T + plotH - (v / maxV) * plotH;
+  const configs = ['default', 'tuned'];
+  const barW = plotW / configs.length * 0.4;
+  const slot = plotW / configs.length;
+
+  const step = maxV > 60 ? 20 : 10;
+  for (let v = 0; v <= maxV; v += step) {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v + '%'; svg.appendChild(t);
+  }
+
+  configs.forEach((cfg, i) => {
+    const v = occData[cfg].weighted_avg;
+    const x = PAD_L + i * slot + (slot - barW) / 2;
+    const y = yPos(v);
+    const rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', barW);
+    rect.setAttribute('height', PAD_T + plotH - y); rect.setAttribute('rx', 2);
+    rect.setAttribute('fill', cfg === 'default' ? 'var(--s1)' : 'var(--s2)'); rect.style.cursor = 'pointer';
+    bindTooltip(rect, () => `<div class="row"><span class="k">config</span><b>${cfg}</b></div><div class="row"><span class="k">weighted avg occupancy</span><b>${v}%</b></div>`);
+    svg.appendChild(rect);
+    const vt = document.createElementNS(svgNS, 'text'); vt.setAttribute('class', 'axis-text-strong');
+    vt.setAttribute('x', x + barW/2); vt.setAttribute('y', y - 6); vt.setAttribute('text-anchor', 'middle');
+    vt.textContent = v + '%'; svg.appendChild(vt);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x + barW/2); t.setAttribute('y', H - 8); t.setAttribute('text-anchor', 'middle');
+    t.textContent = cfg; svg.appendChild(t);
+  });
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderOccAvgChart(OCC_DATA_C64, 'chart-occ-avg');
+renderOccAvgChart(OCC_DATA_C1, 'chart-occ-avg-c1');
+
+function renderOccDistChart(occData, containerId) {
+  const W = 880, rowH = 40, PAD_L = 70, PAD_R = 16, PAD_T = 10, PAD_B = 24, gap = 20;
+  const H = rowH * 2 + gap + PAD_T + PAD_B;
+  const plotW = W - PAD_L - PAD_R;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const xPos = pct => PAD_L + (pct / 100) * plotW;
+  [0,25,50,75,100].forEach(v => {
+    const x = xPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', x); gl.setAttribute('x2', x); gl.setAttribute('y1', PAD_T); gl.setAttribute('y2', H - PAD_B);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - PAD_B + 14); t.setAttribute('text-anchor', 'middle');
+    t.textContent = v + '%'; svg.appendChild(t);
+  });
+  const maxOcc = Math.max(...Object.values(occData).flatMap(d => d.segments.map(s => s.occ_pct)));
+
+  ['default', 'tuned'].forEach((cfg, ri) => {
+    const y = PAD_T + ri * (rowH + gap);
+    const baseColor = cfg === 'default' ? 'var(--s1)' : 'var(--s2)';
+    const label = document.createElementNS(svgNS, 'text'); label.setAttribute('class', 'axis-text-strong');
+    label.setAttribute('x', PAD_L - 10); label.setAttribute('y', y + rowH/2 + 4); label.setAttribute('text-anchor', 'end');
+    label.textContent = cfg; svg.appendChild(label);
+
+    let cursor = 0;
+    occData[cfg].segments.forEach(seg => {
+      const x0 = xPos(cursor), x1 = xPos(cursor + seg.share_pct);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', x0); rect.setAttribute('y', y);
+      rect.setAttribute('width', Math.max(0.5, x1 - x0)); rect.setAttribute('height', rowH);
+      rect.setAttribute('fill', baseColor);
+      rect.setAttribute('fill-opacity', (0.25 + 0.75 * (seg.occ_pct / maxOcc)).toFixed(2));
+      rect.setAttribute('stroke', 'var(--surface-1)'); rect.setAttribute('stroke-width', '1');
+      rect.style.cursor = 'pointer';
+      bindTooltip(rect, () => `<div class="row"><span class="k">occupancy</span><b>${seg.occ_pct}%</b></div><div class="row"><span class="k">share of launches</span><b>${seg.share_pct}%</b></div><div class="row"><span class="k">count</span><b>${seg.count.toLocaleString()}</b></div>`);
+      svg.appendChild(rect);
+      if (seg.share_pct > 8) {
+        const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+        t.setAttribute('x', (x0+x1)/2); t.setAttribute('y', y + rowH/2 + 3); t.setAttribute('text-anchor', 'middle');
+        t.setAttribute('fill', 'var(--surface-1)'); t.textContent = seg.occ_pct + '%';
+        svg.appendChild(t);
+      }
+      cursor += seg.share_pct;
+    });
+  });
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderOccDistChart(OCC_DATA_C64, 'chart-occ-dist');
+renderOccDistChart(OCC_DATA_C1, 'chart-occ-dist-c1');
+
+// ============ Panel: full distribution of GEMM launch durations ============
+function niceLogTicks(lo, hi) {
+  const candidates = [10,20,30,50,75,100,150,200,300,500,750,1000,1500,2000,3000,5000];
+  return candidates.filter(v => v >= lo && v <= hi);
+}
+function renderDistChart(d, containerId) {
+  const W = 880, H = 240, PAD_L = 48, PAD_R = 16, PAD_T = 14, PAD_B = 26;
+  const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  const bins = d.bins;
+  const logLo = Math.log10(bins[0]), logHi = Math.log10(bins[bins.length-1]);
+  const xPos = v => PAD_L + (Math.log10(v) - logLo) / (logHi - logLo) * plotW;
+
+  const maxPct = Math.max(...d.default_pct, ...d.tuned_pct) * 1.08;
+  const yPos = v => PAD_T + plotH - (v / maxPct) * plotH;
+
+  [0, maxPct*0.25, maxPct*0.5, maxPct*0.75, maxPct].forEach(v => {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line'); gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R); gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 6); t.setAttribute('y', y + 3); t.setAttribute('text-anchor', 'end');
+    t.textContent = v.toFixed(1) + '%'; svg.appendChild(t);
+  });
+
+  niceLogTicks(bins[0], bins[bins.length-1]).forEach(v => {
+    const x = xPos(v);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 8); t.setAttribute('text-anchor', 'middle');
+    t.textContent = v >= 1000 ? (v/1000)+'ms' : v+'µs'; svg.appendChild(t);
+  });
+
+  function drawSeries(pctArr, color, n) {
+    for (let i = 0; i < bins.length - 1; i++) {
+      const pct = pctArr[i];
+      if (pct <= 0) continue;
+      const x0 = xPos(bins[i]), x1 = xPos(bins[i+1]);
+      const y = yPos(pct);
+      const rect = document.createElementNS(svgNS, 'rect');
+      rect.setAttribute('x', x0); rect.setAttribute('y', y);
+      rect.setAttribute('width', Math.max(0.5, x1 - x0 - 0.5)); rect.setAttribute('height', PAD_T + plotH - y);
+      rect.setAttribute('fill', color); rect.setAttribute('fill-opacity', '0.55');
+      rect.style.cursor = 'pointer';
+      bindTooltip(rect, () => `<div class="row"><span class="k">range</span><b>${bins[i].toFixed(0)}&ndash;${bins[i+1].toFixed(0)}µs</b></div><div class="row"><span class="k">share</span><b>${pct.toFixed(2)}%</b></div><div class="row"><span class="k">n</span><b>${Math.round(pct/100*n).toLocaleString()}</b></div>`);
+      svg.appendChild(rect);
+    }
+  }
+  drawSeries(d.default_pct, 'var(--s1)', d.default_n);
+  drawSeries(d.tuned_pct, 'var(--s2)', d.tuned_n);
+
+  function vline(v, color, dash, labelText) {
+    const x = xPos(v);
+    const l = document.createElementNS(svgNS, 'line');
+    l.setAttribute('x1', x); l.setAttribute('x2', x); l.setAttribute('y1', PAD_T); l.setAttribute('y2', PAD_T + plotH);
+    l.setAttribute('stroke', color); l.setAttribute('stroke-width', '1.5');
+    if (dash) l.setAttribute('stroke-dasharray', dash);
+    svg.appendChild(l);
+    const t = document.createElementNS(svgNS, 'text'); t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', PAD_T + 9); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', color); t.textContent = labelText;
+    svg.appendChild(t);
+  }
+  vline(d.default_median, 'var(--s1)', '4 3', 'med');
+  vline(d.tuned_median, 'var(--s2)', '4 3', 'med');
+  vline(d.default_mean, 'var(--s1)', null, 'mean');
+  vline(d.tuned_mean, 'var(--s2)', null, 'mean');
+
+  document.getElementById(containerId).innerHTML = '';
+  document.getElementById(containerId).appendChild(svg);
+}
+renderDistChart(DIST_DATA.c64, 'chart-dist-c64');
+renderDistChart(DIST_DATA.c1, 'chart-dist-c1');
+renderDistChart(DIST_DATA_FINE.c64, 'chart-dist-c64-fine');
+renderDistChart(DIST_DATA_FINE.c1, 'chart-dist-c1-fine');
+</script>

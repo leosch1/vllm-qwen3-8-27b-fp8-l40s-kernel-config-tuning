@@ -62,7 +62,7 @@ SHAPES = [
 ]
 BLOCK_N, BLOCK_K = 128, 128
 OUT_DTYPE = torch.bfloat16
-TUNED_DIR = "./tuned-configs"
+TUNED_DIR = "./original-tuned-config"
 NUM_ITERS = 2000
 
 

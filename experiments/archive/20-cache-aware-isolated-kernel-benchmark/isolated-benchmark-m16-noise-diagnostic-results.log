@@ -1,0 +1,23 @@
+=== writing singlefix + tuned gate_up_proj config files ===
+=== writing m16 noise diagnostic script ===
+=== running m16 noise diagnostic ===
+tuned_config[16] = {'BLOCK_SIZE_M': 16, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+singlefix_config[16] = {'BLOCK_SIZE_M': 16, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+
+### gate_up_proj (N=17408, K=5120), M=16, 10 independent repeats
+| repeat | tuned_cycled (us) | singlefix_cycled (us) | speedup |
+|---:|---:|---:|---:|
+| 1 | 16.54 | 16.52 | +0.11% |
+| 2 | 16.98 | 16.38 | +3.57% |
+| 3 | 16.45 | 17.02 | -3.44% |
+| 4 | 16.58 | 17.06 | -2.93% |
+| 5 | 16.39 | 16.64 | -1.49% |
+| 6 | 16.40 | 16.28 | +0.74% |
+| 7 | 16.31 | 16.35 | -0.29% |
+| 8 | 16.68 | 16.59 | +0.58% |
+| 9 | 16.15 | 16.24 | -0.60% |
+| 10 | 16.35 | 16.27 | +0.48% |
+
+mean: -0.33%, stdev: 2.00pp, SEM: 0.63pp
+5/10 repeats positive
+95% CI (approx, t~2.26 for n=10): [-1.76%, +1.10%]

@@ -1,0 +1,275 @@
+<title>Concurrency Sweep</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --series-1:       #2a78d6; /* default */
+  --series-2:       #eb6834; /* tuned */
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-2:      #232321;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #8f8d84;
+    --border:         #35342f;
+    --grid:           #2b2a27;
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1:      #1a1a19;
+  --surface-2:      #232321;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8f8d84;
+  --border:         #35342f;
+  --grid:           #2b2a27;
+  --series-1:       #3987e5;
+  --series-2:       #d95926;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px;
+  max-width: 860px;
+  margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 20px; }
+.legend { display: flex; gap: 18px; align-items: center; margin-bottom: 8px; font-size: 13px; }
+.legend-item { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.swatch { width: 14px; height: 3px; border-radius: 2px; }
+.panel { margin-bottom: 6px; }
+.panel-title { font-size: 12px; color: var(--text-secondary); margin: 18px 0 2px; font-weight: 600; }
+svg { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axis-text { fill: var(--text-muted); font-size: 10px; }
+.crosshair { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 2 2; opacity: 0; pointer-events: none; }
+.dot { pointer-events: none; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.tooltip .delta { color: var(--text-muted); margin-top: 3px; font-size: 11px; }
+.chart-wrap { position: relative; }
+table.data { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 28px; }
+table.data caption { text-align: left; color: var(--text-secondary); font-size: 12px; margin-bottom: 6px; }
+table.data th, table.data td { border-bottom: 1px solid var(--border); padding: 5px 8px; text-align: right; }
+table.data th:first-child, table.data td:first-child { text-align: left; }
+table.data th { color: var(--text-secondary); font-weight: 600; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; margin-top: 18px; }
+</style>
+
+<div class="viz-root">
+  <h1>qwen-27b-pr-evidence — concurrency sweep, default vs. tuned config</h1>
+  <p class="sub">Same throughput profile (<code>--request-rate inf</code>), <code>--num-prompts</code> scaled 16x with concurrency. TP=2, <code>--max-num-seqs=128</code>, <code>vllm/vllm-openai:v0.27.1</code>.</p>
+
+  <div class="legend">
+    <div class="legend-item"><span class="swatch" style="background:var(--series-1)"></span>Default config</div>
+    <div class="legend-item"><span class="swatch" style="background:var(--series-2)"></span>Tuned config</div>
+  </div>
+
+  <div id="charts"></div>
+
+  <details>
+    <summary>Show data table</summary>
+    <table class="data" id="data-table"></table>
+  </details>
+</div>
+
+<script>
+const CONC = [1,2,4,8,16,32,48,64,96,128];
+const metrics = [
+  {
+    key: 'tok_s', title: 'Output tok/s (higher is better)', unit: '',
+    default: [30.84,66.09,126.53,226.08,379.38,572.17,697.72,771.84,875.31,934.31],
+    tuned:   [39.49,72.65,132.62,238.69,392.82,586.74,697.69,765.48,849.95,896.04],
+    fmt: v => v.toFixed(1),
+  },
+  {
+    key: 'tpot', title: 'Mean TPOT, ms (lower is better)', unit: 'ms',
+    default: [31.76,29.18,29.76,32.16,37.32,48.88,60.85,74.35,100.04,126.45],
+    tuned:   [24.58,26.46,27.61,29.99,35.29,46.70,59.96,74.14,102.17,131.21],
+    fmt: v => v.toFixed(1),
+  },
+  {
+    key: 'ttft', title: 'Mean TTFT, ms (lower is better)', unit: 'ms',
+    default: [117.13,165.45,265.31,442.34,655.67,944.29,1068.42,1157.29,1311.35,1444.25],
+    tuned:   [119.39,161.81,353.22,479.63,729.01,1043.83,1182.34,1273.73,1461.08,1590.52],
+    fmt: v => v.toFixed(0),
+  },
+];
+
+const W = 800, H = 190, PAD_L = 46, PAD_R = 14, PAD_T = 10, PAD_B = 26;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+function xPos(c) {
+  const lo = Math.log2(CONC[0]), hi = Math.log2(CONC[CONC.length-1]);
+  return PAD_L + (Math.log2(c) - lo) / (hi - lo) * plotW;
+}
+function niceMax(v) {
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / mag;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * mag;
+}
+
+const chartsEl = document.getElementById('charts');
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+metrics.forEach(m => {
+  const allVals = [...m.default, ...m.tuned];
+  const maxV = niceMax(Math.max(...allVals) * 1.08);
+  const yPos = v => PAD_T + plotH - (v / maxV) * plotH;
+
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  const label = document.createElement('div');
+  label.className = 'panel-title';
+  label.textContent = m.title;
+  panel.appendChild(label);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  // gridlines (y, 4 steps) + labels
+  const ySteps = 4;
+  for (let i = 0; i <= ySteps; i++) {
+    const v = maxV * i / ySteps;
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = Math.round(v);
+    svg.appendChild(t);
+  }
+  // x ticks
+  CONC.forEach(c => {
+    const x = xPos(c);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 6);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = c;
+    svg.appendChild(t);
+  });
+
+  function drawLine(vals, color) {
+    let d = '';
+    vals.forEach((v, i) => {
+      const x = xPos(CONC[i]), y = yPos(v);
+      d += (i === 0 ? 'M' : 'L') + x + ',' + y + ' ';
+    });
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('d', d.trim());
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.appendChild(path);
+    vals.forEach((v, i) => {
+      const c = document.createElementNS(svgNS, 'circle');
+      c.setAttribute('class', 'dot');
+      c.setAttribute('cx', xPos(CONC[i])); c.setAttribute('cy', yPos(v));
+      c.setAttribute('r', 3.5);
+      c.setAttribute('fill', color);
+      svg.appendChild(c);
+    });
+  }
+  drawLine(m.default, 'var(--series-1)');
+  drawLine(m.tuned, 'var(--series-2)');
+
+  // crosshair
+  const ch = document.createElementNS(svgNS, 'line');
+  ch.setAttribute('class', 'crosshair');
+  ch.setAttribute('y1', PAD_T); ch.setAttribute('y2', PAD_T + plotH);
+  svg.appendChild(ch);
+
+  // hit layer
+  const hit = document.createElementNS(svgNS, 'rect');
+  hit.setAttribute('x', PAD_L); hit.setAttribute('y', PAD_T);
+  hit.setAttribute('width', plotW); hit.setAttribute('height', plotH);
+  hit.setAttribute('fill', 'transparent');
+  svg.appendChild(hit);
+
+  hit.addEventListener('mousemove', (e) => {
+    const rect = svg.getBoundingClientRect();
+    const scale = W / rect.width;
+    const mx = (e.clientX - rect.left) * scale;
+    let nearest = 0, best = Infinity;
+    CONC.forEach((c, i) => {
+      const dx = Math.abs(xPos(c) - mx);
+      if (dx < best) { best = dx; nearest = i; }
+    });
+    const c = CONC[nearest];
+    ch.setAttribute('x1', xPos(c)); ch.setAttribute('x2', xPos(c));
+    ch.style.opacity = 1;
+    const dv = m.default[nearest], tv = m.tuned[nearest];
+    const delta = ((tv - dv) / dv * 100).toFixed(1);
+    tooltip.innerHTML = `
+      <div class="row"><span class="k">concurrency</span><b>${c}</b></div>
+      <div class="row"><span class="k" style="color:var(--series-1)">default</span><b>${m.fmt(dv)} ${m.unit}</b></div>
+      <div class="row"><span class="k" style="color:var(--series-2)">tuned</span><b>${m.fmt(tv)} ${m.unit}</b></div>
+      <div class="delta">${delta > 0 ? '+' : ''}${delta}% tuned vs default</div>
+    `;
+    tooltip.style.opacity = 1;
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+  });
+  hit.addEventListener('mouseleave', () => {
+    ch.style.opacity = 0;
+    tooltip.style.opacity = 0;
+  });
+
+  wrap.appendChild(svg);
+  panel.appendChild(wrap);
+  chartsEl.appendChild(panel);
+});
+
+// data table
+const table = document.getElementById('data-table');
+let thead = '<thead><tr><th>concurrency</th>';
+metrics.forEach(m => { thead += `<th>${m.title.split(',')[0].split(' (')[0]} — default</th><th>— tuned</th>`; });
+thead += '</tr></thead>';
+let tbody = '<tbody>';
+CONC.forEach((c, i) => {
+  tbody += `<tr><td>${c}</td>`;
+  metrics.forEach(m => {
+    tbody += `<td>${m.fmt(m.default[i])}</td><td>${m.fmt(m.tuned[i])}</td>`;
+  });
+  tbody += '</tr>';
+});
+tbody += '</tbody>';
+table.innerHTML = thead + tbody;
+</script>

@@ -1,0 +1,30 @@
+vllm bench serve --max-concurrency 1 --num-prompts 20 --request-rate 1
+Config: default, instance B (pod qwen-27b-pr-evidence-predictor-8d5f9b74c-82f4q)
+nsys collection: 223b67fc-19dc-4843-8a44-ed9481336d2c
+
+============ Serving Benchmark Result ============
+Successful requests:                     20
+Failed requests:                         0
+Maximum request concurrency:             1
+Request rate configured (RPS):           1.00
+Benchmark duration (s):                  85.05
+Total input tokens:                      6169
+Total generated tokens:                  2560
+Request throughput (req/s):              0.24
+Output token throughput (tok/s):         30.10
+Peak output token throughput (tok/s):    32.00
+Peak concurrent requests:                2.00
+Total token throughput (tok/s):          102.63
+---------------Time to First Token----------------
+Mean TTFT (ms):                          165.57
+Median TTFT (ms):                        165.11
+P99 TTFT (ms):                           198.02
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          31.90
+Median TPOT (ms):                        31.89
+P99 TPOT (ms):                           31.98
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           31.71
+Median ITL (ms):                         31.92
+P99 ITL (ms):                            38.02
+==================================================

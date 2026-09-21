@@ -1,0 +1,217 @@
+<title>L2-Flush Config, Flushed-Pressure Stability</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f4f3f0;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #85837c;
+  --border:         #e2e0da;
+  --grid:           #ecebe6;
+  --zero-line:      #b8b6ae;
+  --gate-up-proj:   #1baf7a;
+  --in-proj-qkvz:   #eda100;
+  --qkv-proj:       #e87ba4;
+  --down-proj:      #008300;
+  --out-proj:       #e34948;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --surface-2: #232321;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+    --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+    --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+    --down-proj: #008300; --out-proj: #e66767;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1: #1a1a19; --surface-2: #232321;
+  --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8d84;
+  --border: #35342f; --grid: #2b2a27; --zero-line: #4a4944;
+  --gate-up-proj: #199e70; --in-proj-qkvz: #c98500; --qkv-proj: #d55181;
+  --down-proj: #008300; --out-proj: #e66767;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-1); }
+.viz-root {
+  background: var(--surface-1); color: var(--text-primary);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 28px 20px 40px; max-width: 800px; margin: 0 auto;
+}
+h1 { font-size: 17px; margin: 0 0 4px; }
+.sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 14px; max-width: 680px; }
+svg.chart { display: block; overflow: visible; width: 100%; height: auto; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.zeroline { stroke: var(--zero-line); stroke-width: 1.25; stroke-dasharray: 3 3; }
+.axis-text { fill: var(--text-muted); font-size: 10.5px; }
+.legend { display: flex; gap: 16px; margin: 4px 0 6px; font-size: 12px; color: var(--text-secondary); flex-wrap: wrap; }
+.legend .item { display: flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 20px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; opacity: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.15); white-space: nowrap; z-index: 10;
+}
+.tooltip .row { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .k { color: var(--text-secondary); }
+.chart-wrap { position: relative; }
+.note { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; max-width: 660px; }
+.panel-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 0 0 8px; }
+</style>
+
+<div class="viz-root">
+  <h1>Isolated kernel speedup, L2-flush-tuned config vs. default, under L2-flush pressure &mdash; three independent runs</h1>
+  <p class="sub">Same 175-point grid and methodology throughout. Runs 1 and 2 are two independent measurement repeats of the <em>same</em> L2-flush-tuned config (fresh tensors, fresh warmup, same job spec, different pods) &mdash; a pure measurement-stability check. Run 3 goes a level deeper: a completely independent rerun of the <a href="../25-l2-flush-autotune-rerun/">L2-flush autotune script itself</a> (fresh 5-shape &times; 18-M search, real production scope), producing its own distinct tuned config, then benchmarked the same way &mdash; a tuning-stability check, not just a measurement-stability one. All three panels share the same y-axis range for direct visual comparison.</p>
+
+  <div class="legend" id="legend"></div>
+
+  <div class="panel-title">Run 1 <span style="font-weight:400; color:var(--text-muted);">&mdash; measurement repeat</span></div>
+  <div class="chart-wrap" id="chart-wrap-1"></div>
+
+  <div class="panel-title" style="margin-top:28px;">Run 2 <span style="font-weight:400; color:var(--text-muted);">&mdash; independent measurement repeat, same config, freshly allocated tensors</span></div>
+  <div class="chart-wrap" id="chart-wrap-2"></div>
+
+  <div class="panel-title" style="margin-top:28px;">Run 3 <span style="font-weight:400; color:var(--text-muted);">&mdash; independently retuned config (fresh autotune rerun), same benchmark methodology</span></div>
+  <div class="chart-wrap" id="chart-wrap-3"></div>
+
+  <p class="note">Runs 1/2 (same config, repeated measurement): mean speedup +15.5% vs. +15.1%, negative points 1/175 vs. 2/175, identical min/max (-4.2% to +30.2%) and identical worst point (<code>down_proj</code>, M=768, both times). Run 3 (a <em>genuinely different</em> config, from an independent autotune search that lands on a different <code>GROUP_SIZE_M</code> distribution &mdash; see <a href="../25-l2-flush-autotune-rerun/">24</a>'s own run-to-run tuning comparison) lands in the same range regardless: <b>+14.93% mean, 2/175 negative, worst -4.5%</b> (also <code>down_proj</code>, M=768). The specific config the L2-flush search happens to land on varies run to run &mdash; the resulting real-world performance envelope, under this project's most direct validation methodology, does not.</p>
+</div>
+
+<script>
+const DATA1 = {
+  "gate_up_proj": [[1,13.5],[2,6.1],[3,6.7],[4,8.1],[6,8.4],[8,7.5],[12,7.0],[16,5.3],[20,6.8],[24,6.1],[28,5.4],[32,7.7],[40,5.7],[48,5.9],[56,6.1],[64,6.1],[80,3.8],[96,5.8],[112,5.7],[128,4.4],[160,18.3],[200,7.7],[256,7.1],[384,20.9],[512,16.9],[768,12.5],[1024,12.1],[1280,11.0],[1536,9.2],[1792,9.6],[2048,10.6],[2560,14.2],[3072,10.5],[3584,11.3],[4096,5.3]],
+  "in_proj_qkvz": [[1,21.5],[2,15.4],[3,14.4],[4,13.8],[6,13.6],[8,16.3],[12,13.4],[16,18.5],[20,14.5],[24,15.8],[28,13.4],[32,15.9],[40,13.8],[48,14.6],[56,12.8],[64,14.0],[80,13.1],[96,8.5],[112,9.1],[128,17.3],[160,2.7],[200,9.7],[256,8.6],[384,9.3],[512,17.6],[768,14.0],[1024,13.9],[1280,11.0],[1536,10.5],[1792,9.9],[2048,8.5],[2560,7.5],[3072,13.4],[3584,14.0],[4096,13.4]],
+  "qkv_proj": [[1,21.7],[2,17.8],[3,21.4],[4,20.7],[6,21.0],[8,21.7],[12,20.7],[16,19.5],[20,19.4],[24,19.1],[28,20.0],[32,18.1],[40,17.8],[48,22.9],[56,22.3],[64,16.8],[80,7.1],[96,18.6],[112,12.1],[128,14.5],[160,15.8],[200,14.3],[256,12.7],[384,7.6],[512,13.1],[768,13.8],[1024,9.8],[1280,13.5],[1536,13.1],[1792,11.4],[2048,11.3],[2560,11.4],[3072,10.6],[3584,10.3],[4096,12.9]],
+  "down_proj": [[1,29.6],[2,27.9],[3,29.0],[4,27.6],[6,24.2],[8,28.4],[12,28.7],[16,26.1],[20,25.0],[24,28.1],[28,30.2],[32,27.0],[40,27.0],[48,23.6],[56,14.7],[64,25.9],[80,25.0],[96,21.6],[112,6.7],[128,18.9],[160,18.2],[200,13.4],[256,14.9],[384,10.3],[512,8.7],[768,-4.2],[1024,9.2],[1280,12.5],[1536,10.1],[1792,13.7],[2048,9.9],[2560,12.3],[3072,13.4],[3584,13.8],[4096,12.4]],
+  "out_proj": [[1,26.0],[2,24.3],[3,27.3],[4,23.8],[6,27.5],[8,25.5],[12,26.6],[16,26.2],[20,26.4],[24,25.6],[28,22.4],[32,23.7],[40,24.7],[48,23.8],[56,26.1],[64,26.8],[80,29.7],[96,29.6],[112,15.9],[128,26.7],[160,13.3],[200,20.7],[256,22.2],[384,18.0],[512,23.9],[768,11.2],[1024,17.4],[1280,12.1],[1536,11.7],[1792,14.8],[2048,11.6],[2560,10.9],[3072,12.3],[3584,11.7],[4096,8.5]]
+};
+const DATA2 = {
+  "gate_up_proj": [[1,9.4],[2,8.4],[3,9.3],[4,7.2],[6,8.0],[8,6.3],[12,6.7],[16,6.2],[20,7.3],[24,4.6],[28,3.5],[32,6.1],[40,7.5],[48,5.0],[56,6.3],[64,4.1],[80,-0.5],[96,4.5],[112,5.2],[128,4.3],[160,17.9],[200,8.6],[256,10.0],[384,17.9],[512,15.6],[768,10.3],[1024,10.8],[1280,9.1],[1536,9.2],[1792,9.8],[2048,11.8],[2560,13.3],[3072,11.5],[3584,10.4],[4096,6.3]],
+  "in_proj_qkvz": [[1,14.8],[2,16.7],[3,14.1],[4,16.6],[6,14.1],[8,15.6],[12,14.1],[16,16.6],[20,13.2],[24,14.9],[28,12.0],[32,19.4],[40,13.3],[48,16.4],[56,12.4],[64,14.9],[80,11.5],[96,9.6],[112,10.7],[128,12.9],[160,2.8],[200,7.9],[256,9.5],[384,8.7],[512,12.2],[768,12.8],[1024,8.9],[1280,11.1],[1536,9.2],[1792,8.6],[2048,7.6],[2560,6.5],[3072,13.2],[3584,14.1],[4096,13.4]],
+  "qkv_proj": [[1,19.3],[2,17.4],[3,21.0],[4,18.4],[6,25.3],[8,20.2],[12,24.5],[16,19.9],[20,21.1],[24,17.9],[28,20.1],[32,21.2],[40,16.7],[48,19.7],[56,21.4],[64,15.4],[80,8.0],[96,15.7],[112,13.3],[128,16.5],[160,11.0],[200,12.8],[256,10.7],[384,9.0],[512,12.1],[768,13.1],[1024,10.0],[1280,14.0],[1536,10.6],[1792,9.3],[2048,9.1],[2560,11.9],[3072,10.0],[3584,9.6],[4096,12.6]],
+  "down_proj": [[1,27.6],[2,28.8],[3,25.7],[4,26.1],[6,26.6],[8,27.0],[12,27.0],[16,25.0],[20,27.1],[24,30.2],[28,27.2],[32,25.8],[40,27.9],[48,27.7],[56,15.1],[64,23.8],[80,24.1],[96,23.8],[112,9.9],[128,20.0],[160,20.9],[200,15.4],[256,12.0],[384,10.2],[512,7.7],[768,-4.2],[1024,9.1],[1280,13.5],[1536,9.4],[1792,13.7],[2048,10.0],[2560,11.5],[3072,13.1],[3584,12.2],[4096,11.7]],
+  "out_proj": [[1,28.5],[2,27.1],[3,24.5],[4,22.3],[6,29.8],[8,21.8],[12,28.1],[16,26.1],[20,24.4],[24,21.8],[28,26.0],[32,29.1],[40,20.8],[48,26.1],[56,23.1],[64,21.8],[80,29.1],[96,28.9],[112,15.4],[128,23.8],[160,13.0],[200,26.4],[256,23.2],[384,14.4],[512,19.9],[768,14.8],[1024,20.5],[1280,11.0],[1536,10.5],[1792,15.5],[2048,11.2],[2560,12.4],[3072,12.2],[3584,12.7],[4096,6.2]]
+};
+const DATA3 = {
+  "gate_up_proj": [[1,11.4],[2,6.7],[3,8.1],[4,6.2],[6,7.4],[8,7.3],[12,8.2],[16,8.2],[20,5.2],[24,6.6],[28,5.4],[32,0.5],[40,0.6],[48,6.5],[56,6.5],[64,5.9],[80,5.8],[96,3.7],[112,1.9],[128,5.5],[160,16.8],[200,7.0],[256,8.8],[384,14.0],[512,15.5],[768,11.1],[1024,11.2],[1280,9.7],[1536,10.9],[1792,10.2],[2048,10.7],[2560,9.5],[3072,10.4],[3584,9.7],[4096,8.7]],
+  "in_proj_qkvz": [[1,16.2],[2,17.4],[3,13.7],[4,14.5],[6,16.0],[8,16.6],[12,17.3],[16,18.4],[20,15.4],[24,15.3],[28,13.8],[32,16.5],[40,12.9],[48,15.7],[56,13.4],[64,16.9],[80,-3.6],[96,11.4],[112,6.1],[128,18.5],[160,1.5],[200,7.5],[256,9.3],[384,7.3],[512,13.1],[768,13.2],[1024,11.6],[1280,11.3],[1536,8.9],[1792,8.0],[2048,9.2],[2560,6.8],[3072,13.5],[3584,14.2],[4096,14.9]],
+  "qkv_proj": [[1,18.3],[2,21.8],[3,23.1],[4,21.2],[6,23.0],[8,21.6],[12,22.2],[16,19.6],[20,19.9],[24,21.5],[28,24.0],[32,17.9],[40,20.0],[48,17.8],[56,17.8],[64,15.4],[80,8.4],[96,20.0],[112,12.5],[128,19.3],[160,2.4],[200,13.8],[256,13.3],[384,3.3],[512,15.4],[768,12.0],[1024,7.4],[1280,14.0],[1536,12.2],[1792,10.9],[2048,9.4],[2560,13.1],[3072,11.7],[3584,11.4],[4096,14.2]],
+  "down_proj": [[1,30.3],[2,27.3],[3,27.6],[4,26.4],[6,30.5],[8,28.7],[12,28.6],[16,24.9],[20,29.0],[24,26.4],[28,27.5],[32,26.5],[40,30.3],[48,25.7],[56,13.5],[64,25.6],[80,25.7],[96,22.3],[112,8.9],[128,19.4],[160,19.1],[200,13.0],[256,11.9],[384,11.5],[512,10.7],[768,-4.5],[1024,9.6],[1280,12.8],[1536,10.9],[1792,12.2],[2048,9.5],[2560,13.7],[3072,12.9],[3584,13.2],[4096,11.0]],
+  "out_proj": [[1,28.8],[2,26.6],[3,19.5],[4,20.1],[6,23.0],[8,22.8],[12,26.2],[16,25.3],[20,28.5],[24,26.6],[28,22.4],[32,23.1],[40,24.2],[48,22.1],[56,23.6],[64,20.8],[80,23.1],[96,28.7],[112,17.0],[128,23.7],[160,9.8],[200,24.2],[256,21.6],[384,16.7],[512,14.5],[768,9.5],[1024,15.4],[1280,10.3],[1536,10.2],[1792,14.8],[2048,10.7],[2560,11.1],[3072,12.4],[3584,11.8],[4096,6.9]]
+};
+
+const SHAPES = [
+  ["gate_up_proj", "var(--gate-up-proj)"],
+  ["in_proj_qkvz", "var(--in-proj-qkvz)"],
+  ["qkv_proj", "var(--qkv-proj)"],
+  ["down_proj", "var(--down-proj)"],
+  ["out_proj", "var(--out-proj)"],
+];
+
+const legend = document.getElementById('legend');
+SHAPES.forEach(([name, color]) => {
+  const item = document.createElement('span');
+  item.className = 'item';
+  item.innerHTML = `<span class="swatch" style="border-color: ${color};"></span>${name}`;
+  legend.appendChild(item);
+});
+
+const W = 740, H = 340, PAD_L = 50, PAD_R = 20, PAD_T = 16, PAD_B = 32;
+const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
+
+const allM = DATA1["gate_up_proj"].map(p=>p[0]);
+const xMin = Math.log2(Math.min(...allM)), xMax = Math.log2(Math.max(...allM));
+function xPos(c) { return PAD_L + (Math.log2(c) - xMin) / (xMax - xMin) * plotW; }
+
+// Shared y-axis range across ALL THREE runs, for direct visual comparison.
+const allVals = [...Object.values(DATA1).flat(), ...Object.values(DATA2).flat(), ...Object.values(DATA3).flat()].map(p=>p[1]);
+const yMax = Math.ceil(Math.max(...allVals) / 5) * 5;
+const yMin = Math.floor(Math.min(...allVals) / 5) * 5;
+function yPos(v) { return PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH; }
+
+const svgNS = 'http://www.w3.org/2000/svg';
+const tooltip = document.createElement('div');
+tooltip.className = 'tooltip';
+document.body.appendChild(tooltip);
+
+function renderPanel(DATA, containerId) {
+  const svg = document.createElementNS(svgNS, 'svg');
+  svg.setAttribute('class', 'chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+
+  for (let v = yMin; v <= yMax; v += 5) {
+    const y = yPos(v);
+    const gl = document.createElementNS(svgNS, 'line');
+    gl.setAttribute('class', v === 0 ? 'zeroline' : 'gridline');
+    gl.setAttribute('x1', PAD_L); gl.setAttribute('x2', W - PAD_R);
+    gl.setAttribute('y1', y); gl.setAttribute('y2', y);
+    svg.appendChild(gl);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', PAD_L - 8); t.setAttribute('y', y + 3);
+    t.setAttribute('text-anchor', 'end');
+    t.textContent = v + '%';
+    svg.appendChild(t);
+  }
+  [1,4,16,64,256,1024,4096].forEach(c => {
+    const x = xPos(c);
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('class', 'axis-text');
+    t.setAttribute('x', x); t.setAttribute('y', H - 10);
+    t.setAttribute('text-anchor', 'middle');
+    t.textContent = c;
+    svg.appendChild(t);
+  });
+  const xlab = document.createElementNS(svgNS, 'text');
+  xlab.setAttribute('class', 'axis-text');
+  xlab.setAttribute('x', PAD_L + plotW/2); xlab.setAttribute('y', H);
+  xlab.setAttribute('text-anchor', 'middle');
+  xlab.textContent = 'M (batch size)';
+  svg.appendChild(xlab);
+
+  SHAPES.forEach(([name, color]) => {
+    const data = DATA[name];
+    let d = '';
+    data.forEach(([m,v], i) => { d += (i===0?'M':'L') + xPos(m) + ',' + yPos(v) + ' '; });
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('d', d.trim());
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', color);
+    path.setAttribute('stroke-width', 2);
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    path.setAttribute('opacity', '0.9');
+    svg.appendChild(path);
+
+    data.forEach(([m,v]) => {
+      const x = xPos(m), y = yPos(v);
+      const circ = document.createElementNS(svgNS, 'circle');
+      circ.setAttribute('cx', x); circ.setAttribute('cy', y);
+      circ.setAttribute('r', 3.5);
+      circ.setAttribute('fill', color);
+      circ.style.cursor = 'pointer';
+      circ.addEventListener('mouseenter', () => {
+        tooltip.innerHTML = `<div class="row"><span class="k">${name}</span></div><div class="row"><span class="k">M</span><b>${m}</b></div><div class="row"><span class="k">speedup</span><b>${v>0?'+':''}${v.toFixed(1)}%</b></div>`;
+        tooltip.style.opacity = 1;
+      });
+      circ.addEventListener('mousemove', (e) => {
+        tooltip.style.left = (e.clientX + 14) + 'px';
+        tooltip.style.top = (e.clientY - 10 + window.scrollY) + 'px';
+      });
+      circ.addEventListener('mouseleave', () => tooltip.style.opacity = 0);
+      svg.appendChild(circ);
+    });
+  });
+
+  document.getElementById(containerId).appendChild(svg);
+}
+
+renderPanel(DATA1, 'chart-wrap-1');
+renderPanel(DATA2, 'chart-wrap-2');
+renderPanel(DATA3, 'chart-wrap-3');
+</script>

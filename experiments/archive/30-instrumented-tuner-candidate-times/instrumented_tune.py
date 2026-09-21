@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""Instrumented real tuner: log EVERY candidate's measured time, not just the winner.
+
+Open question this exists to answer (see experiments/27 for the trail):
+
+`tune()` only ever reports its argmax. Nobody in this project has looked at
+the actual per-candidate timings *inside* a real search. That leaves several
+things unresolved at once:
+
+  1. Is the tuner's `GROUP_SIZE_M=1` pick reproducible-and-systematic, or a
+     coin flip between near-tied candidates? Experiment 17 found it perfectly
+     stable (4/4) on the RHOAI image; experiment 27's isolated single-M runs
+     on v0.27.1 found it never winning (0/6). Neither looked at margins.
+  2. How large is the in-search margin between GROUP_SIZE_M=1 and the grouped
+     values, and how does it compare to experiment 16's no-switching `ncu`
+     measurement at the same M (GROUP_SIZE_M=1 LOSING by 11.8%)? If the real
+     search reproducibly measures `1` as FASTER while isolated measurement
+     says SLOWER, that's the rapid-kernel-variant-switching effect quantified
+     in its real context for the first time -- systematic bias, not noise.
+  3. Everything careful in this project was done at M=1024, but the blog's
+     central anchor is M=2048. This runs both.
+
+Method: the real, unmodified v0.27.1 tuning script (leosch1/vllm@
+qwen3-8-27b-fp8-dense-tuning), with ONE change -- tune() records every
+candidate's (config, measured_time) instead of discarding losers. Search
+space, 5-warmup+10-timed CUDA-event bracketing, the documented /10 timing
+bug, OutOfResources handling: all unchanged, so the timings are exactly what
+the real tuner would have seen.
+
+RAW OUTPUT: every candidate of every repeat is written to
+candidate_times.jsonl as one JSON object per line, with the full config dict,
+the raw measured time, M, repeat index, and candidate index (search order).
+Nothing is aggregated away -- the summary printed at the end is derived from
+this file, and any other analysis can be redone from it later.
+"""
+
+import json
+import os
+import time
+from datetime import datetime
+from typing import Any
+
+import torch
+from tqdm import tqdm
+
+from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+    _w8a8_triton_block_scaled_mm,
+)
+from vllm.platforms import current_platform
+from vllm.triton_utils import triton
+
+assert current_platform.is_cuda() or current_platform.is_rocm()
+
+N, K = 17408, 5120  # gate_up_proj
+BLOCK_N, BLOCK_K = 128, 128
+OUT_DTYPE = torch.bfloat16
+M_VALUES = [1024, 2048]
+N_REPEATS = 3
+OUT_DIR = "/repo/exp29-results"
+JSONL_PATH = os.path.join(OUT_DIR, "candidate_times.jsonl")
+
+
+def w8a8_block_matmul(A, B, As, Bs, block_size, config, output_dtype=torch.float16):
+    block_n, block_k = block_size[0], block_size[1]
+    M = A.numel() // A.shape[-1]
+    N_, K_ = B.shape
+    C = A.new_empty(A.shape[:-1] + (N_,), dtype=output_dtype)
+
+    def grid(META):
+        return (
+            triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N_, META["BLOCK_SIZE_N"]),
+        )
+
+    kernel = _w8a8_triton_block_scaled_mm
+    kernel[grid](
+        A, B, C, As, Bs, M, N_, K_, block_n, block_k,
+        A.stride(-2), A.stride(-1),
+        B.stride(1), B.stride(0),
+        C.stride(-2), C.stride(-1),
+        As.stride(-2), As.stride(-1),
+        Bs.stride(1), Bs.stride(0),
+        **config,
+    )
+    return C
+
+
+def get_configs_compute_bound():
+    """Verbatim from the real script -- note GROUP_SIZE_M is the INNERMOST
+    loop, so candidates are tested in the order [1, 16, 32, 64] within each
+    otherwise-identical parameter combination."""
+    configs = []
+    for num_stages in [2, 3, 4, 5]:
+        for block_m in [16, 32, 64, 128, 256]:
+            for block_k in [64, 128]:
+                for block_n in [32, 64, 128, 256]:
+                    for num_warps in [4, 8]:
+                        for group_size in [1, 16, 32, 64]:
+                            configs.append(
+                                {
+                                    "BLOCK_SIZE_M": block_m,
+                                    "BLOCK_SIZE_N": block_n,
+                                    "BLOCK_SIZE_K": block_k,
+                                    "GROUP_SIZE_M": group_size,
+                                    "num_warps": num_warps,
+                                    "num_stages": num_stages,
+                                }
+                            )
+    return configs
+
+
+def benchmark_config(A, B, As, Bs, block_size, config, out_dtype=torch.float16, num_iters=10):
+    """Verbatim from the real script, including the documented /10 bug."""
+    def run():
+        w8a8_block_matmul(A, B, As, Bs, block_size, config, out_dtype)
+
+    torch.accelerator.synchronize()
+    for _ in range(5):
+        run()
+    torch.accelerator.synchronize()
+
+    start_event = torch.Event(enable_timing=True)
+    end_event = torch.Event(enable_timing=True)
+
+    latencies: list[float] = []
+    for _ in range(num_iters):
+        torch.accelerator.synchronize()
+        start_event.record()
+        run()
+        end_event.record()
+        end_event.synchronize()
+        latencies.append(start_event.elapsed_time(end_event))
+    avg = sum(latencies) / (num_iters * 10) * 1000  # us
+    # INSTRUMENTATION: also return the raw per-iteration latencies so no
+    # information is thrown away -- the real script only keeps `avg`.
+    return avg, latencies
+
+
+def make_tensors(M):
+    """Verbatim tensor construction from the real script's tune()."""
+    fp8_info = torch.finfo(torch.float8_e4m3fn)
+    fp8_max, fp8_min = fp8_info.max, fp8_info.min
+    factor_for_scale = 1e-2
+
+    A_fp32 = (torch.rand(M, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    A = A_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+    B_fp32 = (torch.rand(N, K, dtype=torch.float32, device="cuda") - 0.5) * 2 * fp8_max
+    B = B_fp32.clamp(min=fp8_min, max=fp8_max).to(torch.float8_e4m3fn)
+
+    n_tiles = (N + BLOCK_N - 1) // BLOCK_N
+    k_tiles = (K + BLOCK_K - 1) // BLOCK_K
+    As = torch.rand(M, k_tiles, dtype=torch.float32, device="cuda") * factor_for_scale
+    Bs = torch.rand(n_tiles, k_tiles, dtype=torch.float32, device="cuda") * factor_for_scale
+    return A, B, As, Bs
+
+
+def tune_instrumented(M, repeat, search_space, jsonl_fh):
+    """The real tune() loop, with every candidate's result recorded."""
+    A, B, As, Bs = make_tensors(M)
+    torch.accelerator.synchronize()
+
+    best_config, best_time = None, float("inf")
+    n_ok = n_skipped = 0
+
+    for idx, config in enumerate(tqdm(search_space, desc=f"M={M} r{repeat}")):
+        try:
+            kernel_time, raw_latencies = benchmark_config(
+                A, B, As, Bs, [BLOCK_N, BLOCK_K], config, OUT_DTYPE, num_iters=10
+            )
+        except triton.runtime.autotuner.OutOfResources:
+            n_skipped += 1
+            jsonl_fh.write(json.dumps({
+                "M": M, "repeat": repeat, "candidate_index": idx,
+                "config": config, "kernel_time_us": None,
+                "raw_latencies_ms": None, "status": "OutOfResources",
+            }) + "\n")
+            continue
+
+        n_ok += 1
+        jsonl_fh.write(json.dumps({
+            "M": M, "repeat": repeat, "candidate_index": idx,
+            "config": config, "kernel_time_us": kernel_time,
+            "raw_latencies_ms": raw_latencies, "status": "ok",
+        }) + "\n")
+        jsonl_fh.flush()
+
+        # Real script's selection rule: strict `<`, incumbent keeps ties.
+        if kernel_time < best_time:
+            best_time = kernel_time
+            best_config = config
+
+    print(f"  M={M} repeat={repeat}: {n_ok} evaluated, {n_skipped} skipped", flush=True)
+    print(f"  winner: {best_config}  ({best_time:.3f}us)", flush=True)
+    return best_config, best_time
+
+
+def main():
+    torch.cuda.init()
+    os.makedirs(OUT_DIR, exist_ok=True)
+    search_space = get_configs_compute_bound()
+    # Real script's downstream filter (block_k=128 -> removes nothing, but
+    # kept for exact parity).
+    search_space = [c for c in search_space if BLOCK_K % c["BLOCK_SIZE_K"] == 0]
+    print(f"search space size: {len(search_space)}", flush=True)
+    print(f"writing raw per-candidate data to {JSONL_PATH}", flush=True)
+
+    winners = []
+    t0 = time.time()
+    with open(JSONL_PATH, "a") as jsonl_fh:
+        for M in M_VALUES:
+            for repeat in range(1, N_REPEATS + 1):
+                print(f"\n=== M={M}, repeat {repeat}/{N_REPEATS} "
+                      f"({datetime.now().ctime()}) ===", flush=True)
+                cfg, t = tune_instrumented(M, repeat, search_space, jsonl_fh)
+                winners.append({"M": M, "repeat": repeat, "winner": cfg,
+                                "winner_time_us": t})
+                with open(os.path.join(OUT_DIR, "winners.json"), "w") as f:
+                    json.dump(winners, f, indent=2)
+
+    print(f"\ntotal time: {time.time() - t0:.1f}s", flush=True)
+    print("\n=== WINNERS ===")
+    for w in winners:
+        print(f"M={w['M']} r{w['repeat']}: GROUP_SIZE_M={w['winner']['GROUP_SIZE_M']}  {w['winner']}")
+
+    # Derived summary ONLY -- raw data above is the source of truth.
+    print("\n=== GROUP_SIZE_M head-to-head, holding each repeat's winning "
+          "other-params fixed (derived from candidate_times.jsonl) ===")
+    rows = [json.loads(l) for l in open(JSONL_PATH) if l.strip()]
+    for w in winners:
+        base = {k: v for k, v in w["winner"].items() if k != "GROUP_SIZE_M"}
+        matches = {}
+        for r in rows:
+            if r["M"] != w["M"] or r["repeat"] != w["repeat"] or r["kernel_time_us"] is None:
+                continue
+            if all(r["config"].get(k) == v for k, v in base.items()):
+                matches[r["config"]["GROUP_SIZE_M"]] = r["kernel_time_us"]
+        if matches:
+            fastest = min(matches, key=matches.get)
+            g1 = matches.get(1)
+            delta = ((g1 / matches[fastest] - 1) * 100) if g1 and fastest != 1 else 0.0
+            print(f"M={w['M']} r{w['repeat']}  base={base}")
+            print(f"    times: " + "  ".join(f"GSM={g}:{matches[g]:.3f}us" for g in sorted(matches)))
+            print(f"    fastest={fastest}, GROUP_SIZE_M=1 is {delta:+.2f}% vs fastest")
+
+
+if __name__ == "__main__":
+    main()

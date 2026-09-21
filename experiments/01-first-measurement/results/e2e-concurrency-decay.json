@@ -1,0 +1,16 @@
+{
+  "description": "Output tok/s delta of the tuned config vs. the default config, from a real end-to-end vLLM serving deployment (vllm bench serve, --dataset-name random --random-input-len 256 --random-output-len 128), swept across --max-concurrency. Same two configs as kernel-level-mean-speedup.json, now measured through the full serving stack instead of one isolated GEMM call.",
+  "unit": "percent, positive = tuned config has higher output tok/s than default",
+  "points": [
+    {"concurrency": 1,   "tok_s_delta_pct": 28.0},
+    {"concurrency": 2,   "tok_s_delta_pct": 9.9},
+    {"concurrency": 4,   "tok_s_delta_pct": 4.8},
+    {"concurrency": 8,   "tok_s_delta_pct": 5.6},
+    {"concurrency": 16,  "tok_s_delta_pct": 3.5},
+    {"concurrency": 32,  "tok_s_delta_pct": 2.5},
+    {"concurrency": 48,  "tok_s_delta_pct": -0.0},
+    {"concurrency": 64,  "tok_s_delta_pct": -0.8},
+    {"concurrency": 96,  "tok_s_delta_pct": -2.9},
+    {"concurrency": 128, "tok_s_delta_pct": -4.1}
+  ]
+}

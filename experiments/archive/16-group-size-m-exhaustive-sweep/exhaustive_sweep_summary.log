@@ -1,0 +1,40 @@
+=== group_size_m_exhaustive.py output (summary excerpt) ===
+gate_up_proj (N=17408, K=5120), 18 M values x 4 GROUP_SIZE_M candidates
+{1,16,32,64}, round-robin across all 72 conditions, 16 repeats x 50
+iters/block = 800 iterations/condition. Each M uses that M's actual tuned
+BLOCK_SIZE_M/N/K, num_warps, num_stages, varying only GROUP_SIZE_M.
+
+Per-condition mean +/- SEM computed from 16 block-means (SEM =
+stdev(block_means)/sqrt(16)). "test-winner" = argmin of the 4 condition
+means. "matches-tuner?" verdict uses an uncorrected 2*combined_SE band
+(see group_size_m_exhaustive.py's own docstring/code for the exact
+definition) -- NOT a rigorous multiple-comparison-corrected test.
+
+Headline data point used for the ncu follow-up (M=1024):
+  GROUP_SIZE_M=1:   563.05 us
+  GROUP_SIZE_M=64:  595.38 us
+  -> GROUP_SIZE_M=1 "wins" by 5.7% (clean, non-noise gap by the script's
+     own 2*SE heuristic)
+
+Aggregate verdict across all 18 M values (tuner's own picked GROUP_SIZE_M
+vs. the script's test-winner):
+  Tuner's pick was the fastest in our test:            9/18
+  Tuner's pick tied with fastest (within 2*SE band):   7/18
+  Tuner's pick measurably beaten by another candidate: 2/18
+
+Pattern noted at the time: a real, non-noise "GROUP_SIZE_M=1 wins" signal
+across M=512-3072 (matching the tuner's own GROUP_SIZE_M=1 choice at those
+M values), a tie at M=2048, and a reversal at M=4096 (GROUP_SIZE_M=64 beat
+GROUP_SIZE_M=1 by ~11.2%).
+
+*** THIS RESULT IS NOW BELIEVED TO BE A MEASUREMENT ARTIFACT. ***
+See README.md "Correction" section: the round-robin design here cycles
+through 72 conditions spanning 18 *different* M values (18 different,
+much larger A/B tensor pairs), meaning every 50-iteration block for one
+(M, GROUP_SIZE_M) condition is immediately preceded by a block using a
+completely different M's tensors -- a cross-M cold-start transient on
+every single block. The follow-up ncu probe and single-M-only rerun
+(group_size_m_single_m.py), which eliminate that cross-M switching, both
+find the OPPOSITE ordering at M=1024 (GROUP_SIZE_M=1 losing, not winning).
+The 9/18 vs 7/18 vs 2/18 tallies above should not be treated as reflecting
+true steady-state kernel performance.

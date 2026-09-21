@@ -1,0 +1,147 @@
+diff --git a/vllm/model_executor/layers/quantization/utils/fp8_utils.py b/vllm/model_executor/layers/quantization/utils/fp8_utils.py
+index 1fce36824..102d3028b 100644
+--- a/vllm/model_executor/layers/quantization/utils/fp8_utils.py
++++ b/vllm/model_executor/layers/quantization/utils/fp8_utils.py
+@@ -2,9 +2,13 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ # Adapted from https://github.com/sgl-project/sglang/pull/2575
++import atexit
+ import functools
+ import json
+ import os
++import threading
++import time
++from collections import Counter
+ from collections.abc import Callable, Sequence
+ from typing import Any
+ 
+@@ -28,6 +32,109 @@ from vllm.model_executor.parameter import (
+ from vllm.model_executor.utils import set_weight_attrs
+ from vllm.platforms import current_platform
+ from vllm.triton_utils import tl, triton
++
++# --- diagnostic instrumentation, not part of upstream vLLM ---
++# Records every (label, N, K, M) this process actually calls
++# w8a8_triton_block_scaled_mm with, dumped periodically so it can be read
++# from outside the process without restarting it. `label` is whatever the
++# benchmark driver last wrote to _LABEL_PATH (e.g. the current concurrency
++# level) -- refreshed periodically, not per-call, to keep this cheap.
++#
++# Second, separately opt-in recorder: the ordered logical GEMM call plan
++# (sequence, run_id, host_time_ns, weight_id, M, N, K, grid_x, config), used
++# to check whether two independent serving runs (e.g. default vs tuned) are
++# actually doing pairable/comparable logical work despite dynamic batching.
++# Disabled unless VLLM_W8A8_CALL_PLAN_PATH is set -- no effect on the
++# M-histogram capture above, or on anything when unset.
++_M_COUNTS: Counter = Counter()
++_M_COUNTS_LOCK = threading.Lock()
++_M_COUNTS_PATH = "/tmp/m_histogram.json"
++_LABEL_PATH = "/tmp/current_label.txt"
++_CURRENT_LABEL = "unknown"
++_W8A8_CALL_PLAN_PATH = os.getenv("VLLM_W8A8_CALL_PLAN_PATH")
++_W8A8_CALL_PLAN_RUN_ID = os.getenv("VLLM_W8A8_CALL_PLAN_RUN_ID", "")
++_W8A8_CALL_PLAN_LOCK = threading.Lock()
++_W8A8_CALL_PLAN: list[dict[str, Any]] = []
++_W8A8_CALL_SEQUENCE = 0
++_W8A8_WEIGHT_IDS: dict[int, int] = {}
++
++
++def _dump_m_counts():
++    with _M_COUNTS_LOCK:
++        snapshot = dict(_M_COUNTS)
++    with open(_M_COUNTS_PATH, "w") as f:
++        json.dump(
++            {f"{label}|{n},{k},{m}": c for (label, n, k, m), c in snapshot.items()}, f
++        )
++
++
++def _refresh_label():
++    global _CURRENT_LABEL
++    try:
++        with open(_LABEL_PATH) as f:
++            _CURRENT_LABEL = f.read().strip()
++    except FileNotFoundError:
++        pass
++
++
++def _record_w8a8_call(
++    B: torch.Tensor, M: int, N: int, K: int, config: dict[str, Any]
++) -> None:
++    if _W8A8_CALL_PLAN_PATH is None:
++        return
++
++    global _W8A8_CALL_SEQUENCE
++    with _W8A8_CALL_PLAN_LOCK:
++        weight_ptr = B.data_ptr()
++        weight_id = _W8A8_WEIGHT_IDS.setdefault(weight_ptr, len(_W8A8_WEIGHT_IDS))
++        block_m = config["BLOCK_SIZE_M"]
++        block_n = config["BLOCK_SIZE_N"]
++        _W8A8_CALL_PLAN.append(
++            {
++                "sequence": _W8A8_CALL_SEQUENCE,
++                "run_id": _W8A8_CALL_PLAN_RUN_ID,
++                "host_time_ns": time.monotonic_ns(),
++                "weight_id": weight_id,
++                "M": M,
++                "N": N,
++                "K": K,
++                "grid_x": (M + block_m - 1) // block_m
++                * ((N + block_n - 1) // block_n),
++                "config": config,
++            }
++        )
++        _W8A8_CALL_SEQUENCE += 1
++
++
++def _flush_w8a8_call_plan() -> None:
++    if _W8A8_CALL_PLAN_PATH is None:
++        return
++
++    with _W8A8_CALL_PLAN_LOCK:
++        if not _W8A8_CALL_PLAN:
++            return
++        records = _W8A8_CALL_PLAN.copy()
++        _W8A8_CALL_PLAN.clear()
++
++    parent = os.path.dirname(_W8A8_CALL_PLAN_PATH)
++    if parent:
++        os.makedirs(parent, exist_ok=True)
++    with open(_W8A8_CALL_PLAN_PATH, "a", encoding="utf-8") as f:
++        for record in records:
++            f.write(json.dumps(record, separators=(",", ":")) + "\n")
++
++
++def _periodic_maintenance():
++    while True:
++        time.sleep(1)
++        _refresh_label()
++        _dump_m_counts()
++        _flush_w8a8_call_plan()
++
++
++threading.Thread(target=_periodic_maintenance, daemon=True).start()
++atexit.register(_flush_w8a8_call_plan)
++# --- end diagnostic instrumentation ---
+ from vllm.utils.deep_gemm import (
+     get_tma_aligned_size,
+     is_deep_gemm_e8m0_used,
+@@ -931,6 +1038,9 @@ def w8a8_triton_block_scaled_mm(
+     assert triton.cdiv(N, block_n) == Bs.shape[0]
+     assert triton.cdiv(K, block_k) == Bs.shape[1]
+ 
++    with _M_COUNTS_LOCK:
++        _M_COUNTS[(_CURRENT_LABEL, N, K, M)] += 1
++
+     C_shape = A.shape[:-1] + (N,)
+     C = A.new_empty(C_shape, dtype=output_dtype)
+ 
+@@ -951,6 +1061,8 @@ def w8a8_triton_block_scaled_mm(
+             "num_stages": 2,
+         }
+ 
++    _record_w8a8_call(B, M, N, K, config)
++
+     def grid(META):
+         return (
+             triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(N, META["BLOCK_SIZE_N"]),

@@ -1,0 +1,47 @@
+# Same as 20's inferenceservice.yaml (nvidia-nsight-profile: enabled
+# restored for a real capture, unlike 18's pure e2e throughput sweep).
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen-27b-pr-evidence
+  namespace: enterprise-ai
+  annotations:
+    serving.kserve.io/deploymentMode: Standard
+    security.opendatahub.io/enable-auth: "true"
+    serving.knative.openshift.io/enablePassthrough: "true"
+    openshift.io/display-name: "Qwen3.8-27B-FP8 - PR Evidence (v0.27.1)"
+    serving.kserve.io/storageSecretName: nutanix-objects-credentials
+  labels:
+    opendatahub.io/dashboard: "true"
+    networking.kserve.io/visibility: exposed
+    opendatahub.io/genai-asset: "true"
+spec:
+  predictor:
+    serviceAccountName: qwen3-8-27b-fp8-pr-evidence-profiler
+    labels:
+      kueue.x-k8s.io/queue-name: gpu-autotune
+      nvidia-nsight-profile: enabled
+    tolerations:
+    - effect: NoSchedule
+      key: nvidia.com/gpu
+      operator: Equal
+      value: present
+    deploymentStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 0
+        maxUnavailable: 1
+    model:
+      modelFormat:
+        name: vLLM
+      runtime: vllm-qwen3-8-27b-fp8-pr-evidence-gpu
+      storageUri: "s3://enterprise-ai-models/qwen-27b-fp8"
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"

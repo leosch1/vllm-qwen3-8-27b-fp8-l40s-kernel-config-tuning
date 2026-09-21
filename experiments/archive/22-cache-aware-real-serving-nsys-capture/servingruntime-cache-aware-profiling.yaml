@@ -1,0 +1,95 @@
+# Same base as 20's servingruntime-groupfix-profiling.yaml (CUDA graphs
+# enabled, no --enforce-eager) but mounting 18 round 2's real cache-aware
+# autotune output (cache-aware-tuned-configs-v2 -- the "good draw", GROUP_SIZE_M=16
+# at gate_up_proj M=2048) instead of groupfix's hand patch. Pointed at a
+# dedicated ConfigMap (avoids touching the shared dense-tuned-configs PVC's
+# uncertain current state) -- built specifically for a real nsys capture
+# (experiment 21), unlike 18 which deliberately omitted profiling for a pure
+# e2e sweep.
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-qwen3-8-27b-fp8-pr-evidence-gpu
+  namespace: enterprise-ai
+  annotations:
+    opendatahub.io/apiProtocol: REST
+    opendatahub.io/recommended-accelerators: '["nvidia.com/gpu"]'
+    opendatahub.io/template-display-name: vLLM Runtime for Qwen3.8-27B-FP8 (PR evidence, GPU)
+    openshift.io/display-name: vLLM Qwen3.8-27B-FP8 PR Evidence GPU
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  annotations:
+    opendatahub.io/kserve-runtime: vllm
+    prometheus.io/path: /metrics
+    prometheus.io/port: "8080"
+  containers:
+  - name: kserve-container
+    image: docker.io/vllm/vllm-openai:v0.27.1
+    securityContext:
+      runAsUser: 0
+      capabilities:
+        add:
+        - SYS_ADMIN
+    command:
+    - python3
+    - -m
+    - vllm.entrypoints.openai.api_server
+    args:
+    - --port=8080
+    - --model=/mnt/models
+    - --served-model-name={{.Name}}
+    - --tensor-parallel-size=2
+    - --max-model-len=8192
+    - --reasoning-parser=qwen3
+    - --enable-auto-tool-choice
+    - --tool-call-parser=qwen3_coder
+    - --max-num-seqs=128
+    # --enforce-eager INTENTIONALLY OMITTED -- CUDA graphs must stay on both
+    # for realistic e2e numbers and so --cuda-graph-trace=node has anything
+    # to decompose during the nsys capture.
+    env:
+    - name: HF_HOME
+      value: /tmp/hf_home
+    - name: PYTORCH_CUDA_ALLOC_CONF
+      value: expandable_segments:True
+    - name: HOME
+      value: /tmp
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+    volumeMounts:
+    - mountPath: /dev/shm
+      name: shm
+    - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=17408,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      name: cache-aware-tuned-configs-v2-profiling
+      subPath: gate_up_proj.json
+      readOnly: true
+    - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=8192,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      name: cache-aware-tuned-configs-v2-profiling
+      subPath: in_proj_qkvz.json
+      readOnly: true
+    - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=7168,K=5120,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      name: cache-aware-tuned-configs-v2-profiling
+      subPath: qkv_proj.json
+      readOnly: true
+    - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=8704,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      name: cache-aware-tuned-configs-v2-profiling
+      subPath: down_proj.json
+      readOnly: true
+    - mountPath: /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/configs/N=5120,K=3072,device_name=NVIDIA_L40S,dtype=fp8_w8a8,block_shape=[128,128].json
+      name: cache-aware-tuned-configs-v2-profiling
+      subPath: out_proj.json
+      readOnly: true
+  multiModel: false
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 2Gi
+  - name: cache-aware-tuned-configs-v2-profiling
+    configMap:
+      name: cache-aware-tuned-configs-v2-profiling
+  supportedModelFormats:
+  - autoSelect: true
+    name: vLLM

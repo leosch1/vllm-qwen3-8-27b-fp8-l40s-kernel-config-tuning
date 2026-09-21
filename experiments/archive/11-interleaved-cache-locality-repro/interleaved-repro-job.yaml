@@ -1,0 +1,50 @@
+# One-off, throwaway job for the interleaved-kernel cache-locality
+# reproduction (experiment 11). Deliberately carries NO
+# nvidia-nsight-profile=enabled label, so the nsight-operator's mutating
+# webhook never wraps it -- avoids the ~10x per-launch overhead confound
+# hit when running this on the injected serving pod with DCGM paused
+# (GPU-metrics telemetry collection at 1000Hz dominates every launch's
+# timing otherwise). Not GitOps-managed; apply/delete manually.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: interleaved-kernel-repro
+  namespace: enterprise-ai
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Equal
+          value: present
+      containers:
+        - name: repro
+          image: docker.io/vllm/vllm-openai:v0.27.1
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -euo pipefail
+              echo "=== waiting for scripts to be copied in ==="
+              while [ ! -f /tmp/interleaved_kernel_repro.py ]; do sleep 1; done
+              sleep 2
+              echo "=== running ==="
+              cd /tmp && python3 interleaved_kernel_repro.py
+              echo "=== done, sleeping so results can be copied out ==="
+              sleep infinity
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "6"
+              memory: 28Gi
+              nvidia.com/gpu: "1"

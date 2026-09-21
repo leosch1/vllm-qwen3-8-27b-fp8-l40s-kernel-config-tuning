@@ -1,0 +1,61 @@
+search space size: 1280
+writing raw per-candidate data to /repo/exp29-results/candidate_times.jsonl
+
+=== M=1024, repeat 1/3 (Sat Sep 19 16:08:50 2026) ===
+  M=1024 repeat=1: 1128 evaluated, 152 skipped
+  winner: {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}  (54.382us)
+
+=== M=1024, repeat 2/3 (Sat Sep 19 16:26:04 2026) ===
+  M=1024 repeat=2: 1128 evaluated, 152 skipped
+  winner: {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}  (56.460us)
+
+=== M=1024, repeat 3/3 (Sat Sep 19 16:27:03 2026) ===
+  M=1024 repeat=3: 1128 evaluated, 152 skipped
+  winner: {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 4}  (58.709us)
+
+=== M=2048, repeat 1/3 (Sat Sep 19 16:28:02 2026) ===
+  winner: {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 4}  (115.621us)
+
+=== M=2048, repeat 2/3 (Sat Sep 19 16:30:01 2026) ===
+  winner: {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 4}  (114.612us)
+
+=== M=2048, repeat 3/3 (Sat Sep 19 16:31:59 2026) ===
+  winner: {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}  (112.126us)
+
+total time: 1508.5s
+
+=== WINNERS ===
+M=1024 r1: GROUP_SIZE_M=1  {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+M=1024 r2: GROUP_SIZE_M=1  {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+M=1024 r3: GROUP_SIZE_M=1  {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 4}
+M=2048 r1: GROUP_SIZE_M=1  {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 4}
+M=2048 r2: GROUP_SIZE_M=1  {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 4}
+M=2048 r3: GROUP_SIZE_M=1  {'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'GROUP_SIZE_M': 1, 'num_warps': 8, 'num_stages': 3}
+
+=== GROUP_SIZE_M head-to-head, holding each repeat's winning other-params fixed (derived from candidate_times.jsonl) ===
+M=1024 r1  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 3}
+    times: GSM=1:54.382us  GSM=16:55.480us  GSM=32:55.092us  GSM=64:56.289us
+    fastest=1, GROUP_SIZE_M=1 is +0.00% vs fastest
+M=1024 r2  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 3}
+    times: GSM=1:56.460us  GSM=16:58.745us  GSM=32:59.873us  GSM=64:60.139us
+    fastest=1, GROUP_SIZE_M=1 is +0.00% vs fastest
+M=1024 r3  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 4}
+    times: GSM=1:58.709us  GSM=16:59.939us  GSM=32:59.904us  GSM=64:64.018us
+    fastest=1, GROUP_SIZE_M=1 is +0.00% vs fastest
+M=2048 r1  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 4}
+    times: GSM=1:115.621us  GSM=16:122.106us  GSM=32:132.239us  GSM=64:134.934us
+    fastest=1, GROUP_SIZE_M=1 is +0.00% vs fastest
+M=2048 r2  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 4}
+    times: GSM=1:114.612us  GSM=16:118.253us  GSM=32:136.301us  GSM=64:136.997us
+    fastest=1, GROUP_SIZE_M=1 is +0.00% vs fastest
+M=2048 r3  base={'BLOCK_SIZE_M': 128, 'BLOCK_SIZE_N': 128, 'BLOCK_SIZE_K': 128, 'num_warps': 8, 'num_stages': 3}
+    times: GSM=1:112.126us  GSM=16:119.692us  GSM=32:130.107us  GSM=64:136.067us
+    fastest=1, GROUP_SIZE_M=1 is +0.00% vs fastest
+=== raw data files ===
+total 3188
+drwxr-sr-x. 2 1000900000 1000900000      55 Sep 19 16:26 .
+drwxrwsrwx. 3 root       1000900000      55 Sep 19 16:08 ..
+-rw-r--r--. 1 1000900000 1000900000 3256781 Sep 19 16:33 candidate_times.jsonl
+-rw-r--r--. 1 1000900000 1000900000    1528 Sep 19 16:33 winners.json
+7680 /repo/exp29-results/candidate_times.jsonl
+=== done, sleeping so data can be copied out ===
