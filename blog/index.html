@@ -140,6 +140,7 @@ h4 { font-family: var(--sans); font-weight: 600; }
 p { margin: 0 0 18px; max-width: 68ch; }
 p.wide-measure { max-width: none; }
 ul, ol { margin: 0 0 18px; padding-left: 24px; }
+ul.tight li { margin-bottom: 2px; }
 li { margin-bottom: 7px; max-width: 64ch; }
 strong { color: var(--ink); font-weight: 600; }
 
@@ -216,7 +217,7 @@ tr.good td { color: var(--good); font-weight: 500; }
 .chart-sub { font-family: var(--sans); font-size: 13px; line-height: 1.55; color: var(--ink-3); margin: 0 0 16px; max-width: none; }
 .legend { display: flex; flex-wrap: wrap; column-gap: 28px; row-gap: 10px; align-items: flex-start; margin-bottom: 12px; font-family: var(--sans); font-size: 12.5px; }
 .legend-item { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
-.legend-col { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.legend-col { display: flex; flex-direction: column; gap: 1px; min-width: 150px; }
 .legend-col-title { font-weight: 600; color: var(--ink); font-size: 12.5px; margin-bottom: 2px; }
 .swatch { width: 13px; height: 3px; }
 .swatch.sq { width: 10px; height: 10px; }
@@ -735,7 +736,7 @@ Config file not found at .../configs/N=17408,K=5120,device_name=NVIDIA_L40S,dtyp
   </div>
   <p>A big improvement for small batch sizes: Roughly 62% at the smallest batch sizes, meaning that the kernel takes 38% of the time it would need using the default config. As the batch size grows, the performance improvement gets smaller (but importantly never significantly negative). A probable explanation for the smaller improvement for bigger batch sizes is the <code>BLOCK_SIZE_M</code> parameter. The default config sets it to 64, no matter the batch size. For a batch size of <code>M=1</code> this leads to 63/64 rows of tiles to be wasted, but the wasted amount is lower for bigger batch sizes. The tuned config sets the <code>BLOCK_SIZE_M</code> closer to the actual batch size:</p>
 
-  <ul>
+  <ul class="tight">
     <li><code>M=1</code> → <code>BLOCK_SIZE_M=16</code></li>
     <li><code>M=32</code> → <code>BLOCK_SIZE_M=32</code></li>
     <li><code>M=64</code> → <code>BLOCK_SIZE_M=64</code></li>
