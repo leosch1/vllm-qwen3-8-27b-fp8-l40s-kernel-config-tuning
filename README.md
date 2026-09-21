@@ -1,10 +1,10 @@
 # Qwen3.8-27B-FP8 dense W8A8 block-FP8 kernel config tuning (NVIDIA L40S)
 
+> Please check out https://leosch1.github.io/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning/blog for the full writeup.
+
 Tuning vLLM's dense W8A8 block-FP8 Triton GEMM kernel for [`Qwen/Qwen3.8-27B-FP8`](https://huggingface.co/Qwen/Qwen3.8-27B-FP8) (`tensor_parallel_size=2`) on NVIDIA L40S, and measuring whether it actually helps — including in real, concurrent serving, not just in isolation.
 
-Backs a PR to [vllm-project/vllm](https://github.com/vllm-project/vllm) contributing the resulting configs upstream: _TODO: link once opened_.
-
-**For the full story — including a real regression the first tuning pass introduced under load, why, and how it's fixed — see [the writeup](https://leosch1.github.io/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning/blog/).** This README covers the current, correct methodology only: the patch needed to reproduce `tuned-configs/`, and the evidence it holds up both at the kernel level and end-to-end. The complete investigation, with every intermediate experiment (including the ones that didn't pan out), is archived in [`experiments/`](./experiments/).
+Backs [vllm-project/vllm#58005](https://github.com/vllm-project/vllm/pull/58005), contributing the resulting configs upstream.
 
 Environment: `vllm/vllm-openai:v0.27.1`, 2x NVIDIA L40S.
 

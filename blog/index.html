@@ -932,10 +932,10 @@ def benchmark_config(...):
   </ul>
 
   <h3>Next steps</h3>
-  <p>There is currently no shipped tuned config in vLLM's own <a href="https://github.com/vllm-project/vllm/tree/main/vllm/model_executor/layers/quantization/utils/configs"><code>vllm/model_executor/layers/quantization/utils/configs/</code></a> directory for this exact GPU/model/tensor-parallel-degree combination. In order for others to be able to use my work as well, I would like to:</p>
+  <p>There is currently no shipped tuned config in vLLM's own <a href="https://github.com/vllm-project/vllm/tree/main/vllm/model_executor/layers/quantization/utils/configs"><code>vllm/model_executor/layers/quantization/utils/configs/</code></a> directory for this exact GPU/model/tensor-parallel-degree combination. In order for others to be able to use my work as well, I:</p>
   <ul>
-    <li><strong>Ship the L2-flush-tuned config</strong> as a PR to vLLM's configs directory.</li>
-    <li><strong>Raise the L2-flush fix with the vLLM community</strong> as a change to the autotuning script itself, not just this one deployment's config. The directory ships 219 tuned configs across 12 GPU types, presumably all using the always-warm search loop. Configs for weight matrices approaching the GPU's L2 cache size are potentially exposed to the same regression traced here.</li>
+    <li><strong>Shipped the L2-flush-tuned config</strong> as <a href="https://github.com/vllm-project/vllm/pull/58005">a PR to vLLM's configs directory</a>.</li>
+    <li><strong>Still want to raise the L2-flush fix with the vLLM community</strong> as a change to the autotuning script itself, not just this one deployment's config. The directory ships 219 tuned configs across 12 GPU types, presumably all using the always-warm search loop. Configs for weight matrices approaching the GPU's L2 cache size are potentially exposed to the same regression traced here.</li>
   </ul>
 </section>
 
