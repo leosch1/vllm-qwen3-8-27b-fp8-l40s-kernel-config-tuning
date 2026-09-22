@@ -483,7 +483,7 @@ Config file not found at .../configs/N=17408,K=5120,device_name=NVIDIA_L40S,dtyp
   <style>.gemm-example-wrap svg{width:100%; max-width:480px; height:auto; display:inline-block;}</style>
   <p style="font-size:13px; color:var(--ink-3); margin-top:-6px;"><var>A</var> · <var>B</var> = <var>C</var>. Here, <code>M=2</code> tokens, <code>K=3</code> input features, <code>N=2</code> output features.</p>
 
-  <p>For our model, the GEMM operation is implemented in <a href="https://github.com/vllm-project/vllm/blob/v0.27.1/vllm/model_executor/layers/quantization/utils/fp8_utils.py#L736"><code>_w8a8_triton_block_scaled_mm</code></a>. Depending on which of the model's weight matrices is being multiplied, the shape of <code>B</code> differs. In total, the GEMM operation is used with five different weight matrix shapes:</p>
+  <p>For the model we deployed, the GEMM operation is implemented in <a href="https://github.com/vllm-project/vllm/blob/v0.27.1/vllm/model_executor/layers/quantization/utils/fp8_utils.py#L736"><code>_w8a8_triton_block_scaled_mm</code></a>. Depending on which of the model's weight matrices is being multiplied, the shape of <code>B</code> differs. In total, the GEMM operation is used with five different weight matrix shapes:</p>
 
   <ul style="list-style:none; padding-left:20px; margin:10px 0 18px; font-size:13px;">
     <li class="legend-item"><span class="swatch sq" style="background:var(--s2)"></span><code>in_proj_qkvz</code> <span style="color:var(--ink-3)">N=8192, K=5120</span></li>
