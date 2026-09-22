@@ -976,7 +976,7 @@ function renderLineChart(containerId, opts) {
   const {
     series,                 // [{data: [[x,y,type?],...], color, label, dashed?, muted?}]
     xTicks, xLog = false, xMin, xMax,
-    yStep = null, yUnit = '%',
+    yStep = null, yUnit = '%', yMin: yMinOpt, yMax: yMaxOpt,
     xLabel = null, yLabel = null,
     W = 860, H = 340,
     PAD_L = 46 + (yLabel ? 14 : 0), PAD_R = 18, PAD_T = 14, PAD_B = 28 + (xLabel ? 16 : 0),
@@ -990,8 +990,8 @@ function renderLineChart(containerId, opts) {
 
   const allY = series.flatMap(s => s.data.map(p => p[1]));
   const step = yStep || Math.pow(10, Math.floor(Math.log10(Math.max(...allY) - Math.min(...allY)))) / 2;
-  const yMax = Math.ceil(Math.max(...allY) / step) * step;
-  const yMin = Math.floor(Math.min(...allY) / step) * step;
+  const yMax = yMaxOpt !== undefined ? yMaxOpt : Math.ceil(Math.max(...allY) / step) * step;
+  const yMin = yMinOpt !== undefined ? yMinOpt : Math.floor(Math.min(...allY) / step) * step;
   const yPos = v => PAD_T + plotH - (v - yMin) / (yMax - yMin) * plotH;
 
   const svg = document.createElementNS(svgNS, 'svg');
@@ -1534,7 +1534,7 @@ const TUNED_FLUSHED = {
 renderLegend('legend-tuned-flushed', Object.keys(TUNED_FLUSHED).map(k => ({label: k, color: SHAPE_COLORS[k]})));
 renderLineChart('chart-tuned-flushed', {
   series: Object.entries(TUNED_FLUSHED).map(([k, data]) => ({ data, color: SHAPE_COLORS[k], label: k })),
-  xLog: true, xMin: 1, xMax: 4096, xTicks: [1,4,16,64,256,1024,4096], yStep: 10,
+  xLog: true, xMin: 1, xMax: 4096, xTicks: [1,4,16,64,256,1024,4096], yStep: 10, yMin: -70, yMax: 30,
   xLabel: 'M (batch size)', yLabel: 'kernel speedup vs. default',
 });
 
@@ -1549,7 +1549,7 @@ const STAB_RUN1 = {
 renderLegend('legend-stability', Object.keys(STAB_RUN1).map(k => ({label: k, color: SHAPE_COLORS[k]})));
 renderLineChart('chart-stability-1', {
   series: Object.entries(STAB_RUN1).map(([k, data]) => ({ data, color: SHAPE_COLORS[k], label: k })),
-  xLog: true, xMin: 1, xMax: 4096, xTicks: [1,4,16,64,256,1024,4096], yStep: 10,
+  xLog: true, xMin: 1, xMax: 4096, xTicks: [1,4,16,64,256,1024,4096], yStep: 10, yMin: -70, yMax: 30,
   xLabel: 'M (batch size)', yLabel: 'kernel speedup vs. default',
 });
 
