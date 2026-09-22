@@ -85,7 +85,7 @@ Uses vLLM's own [benchmarks/kernels/benchmark_w8a8_block_fp8.py](https://github.
 
 The needed shapes were captured from the live predictor logs' "Using default W8A8 Block FP8 kernel config" startup warnings, cross-checked against the model's `config.json`.
 
-**Patch 2 — [flush L2 before every timed launch](https://github.com/leosch1/vllm/commit/139175f0195a54d8f2789a2ecbca6fe101b1f7ee).** The stock tuner reuses the same input tensors across all 1,280 candidate configs per shape, so by the time it's timing the 50th candidate the weight matrix has been sitting in L2 for a while and never leaves — a cache state real serving never has. The fix makes the tuner's own benchmarking loop measure under the condition it's actually optimizing for, threaded explicitly through `tune_on_gpu() → tune() → benchmark_config()` and toggleable via `--l2-flush`/`--no-l2-flush` (default: on):
+**Patch 2 — [flush L2 before every timed launch](https://github.com/leosch1/vllm/commit/53b0156cbce6d2d537457fd98b408cc22ebc6808).** The stock tuner reuses the same input tensors across all 1,280 candidate configs per shape, so by the time it's timing the 50th candidate the weight matrix has been sitting in L2 for a while and never leaves — a cache state real serving never has. The fix makes the tuner's own benchmarking loop measure under the condition it's actually optimizing for, threaded explicitly through `tune_on_gpu() → tune() → benchmark_config()` and toggleable via `--l2-flush`/`--no-l2-flush` (default: on):
 
 ```python
 def benchmark_config(..., flush_l2=True):
