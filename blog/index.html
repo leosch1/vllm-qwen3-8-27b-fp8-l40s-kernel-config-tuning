@@ -930,7 +930,7 @@ def benchmark_config(...):
   <ul>
     <li><strong>An optimiser optimises for the conditions it creates.</strong> The autotuner's measurements were correct for the assumptions it took. Optimising for real serving (e.g. using <code>vllm bench serve</code>) instead of kernel-level performance would be great, but much more time-consuming. When running in production, we must specifically optimise for the actual usage patterns. That is nothing a generic autotuning script can do.</li>
     <li><strong>"Fits in cache" is not "stays in cache."</strong> An 85 MiB weight matrix against a 96 MiB L2 looks safe on paper. It isn't: at that occupancy the output writes and the cache's set-associativity still lead to cache eviction.</li>
-    <li><strong>AI collapsed the cost of the experiments, not the need for judgement.</strong> Thanks to AI, going from a question to data took minutes rather than days, which is why I was able to run more than 30 experiments for this. But wrong interpretations occur surprisingly often and the turns that mattered were mostly human ones.</li>
+    <li><strong>AI collapsed the cost of the experiments.</strong> Thanks to AI, going from a question to data took minutes rather than days, which is why I was able to run more than 30 experiments for this. But wrong interpretations occur surprisingly often and the turns that mattered were mostly human ones.</li>
   </ul>
 
   <h3>Next steps</h3>
