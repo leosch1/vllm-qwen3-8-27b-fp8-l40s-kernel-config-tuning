@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The GROUP_SIZE_M Mystery</title>
+<meta name="description" content="GROUP_SIZE_M is supposed to make a GPU kernel's cache behave better. It does — until the cache is already warm, when it makes things worse instead. A companion piece working through why." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>%E2%9A%A1</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<style>
+:root {
+  color-scheme: light;
+  --bg:            #f9fafa;
+  --surface:       #ffffff;
+  --surface-2:     #eff2f3;
+  --ink:           #1a1d20;
+  --ink-2:         #414a52;
+  --ink-3:         #6b747c;
+  --line:          #e0e4e7;
+  --accent:        #33566b;
+  --accent-ink:    #ffffff;
+  --accent-soft:   #e7edf1;
+  --code-bg:       #f1f4f5;
+  --good:          #1e7a3e;
+  --good-soft:     #e4f1e8;
+  --critical:      #a32b21;
+  --muted-line:    #b4bac0;
+  --a-col:  #2563c9; --a-soft: #e4ecfa;
+  --b-col:  #a68b00; --b-soft: #f6f1d9;
+  --c-col:  #2f8f5b; --c-soft: #e2f2e9;
+  --warm-col: #c98500; --warm-soft: #f7edda;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace;
+  --sans: "Libre Franklin", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg:          #15181a;
+    --surface:     #1c2023;
+    --surface-2:   #23282c;
+    --ink:         #e6e8ea;
+    --ink-2:       #bac1c7;
+    --ink-3:       #8b9298;
+    --line:        #2a2f33;
+    --accent:      #8fb4ca;
+    --accent-ink:  #12222b;
+    --accent-soft: #23323c;
+    --code-bg:     #1b2023;
+    --good:        #5cc47c; --good-soft: #1c2f22;
+    --critical:    #de7c72;
+    --muted-line:  #5e666d;
+    --a-col: #6aa3ef; --a-soft: #1c2836;
+    --b-col: #d4bb4a; --b-soft: #332e14;
+    --c-col: #6bc79a; --c-soft: #1e2f26;
+    --warm-col: #d9a63f; --warm-soft: #332a17;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:          #15181a;
+  --surface:     #1c2023;
+  --surface-2:   #23282c;
+  --ink:         #e6e8ea;
+  --ink-2:       #bac1c7;
+  --ink-3:       #8b9298;
+  --line:        #2a2f33;
+  --accent:      #8fb4ca;
+  --accent-ink:  #12222b;
+  --accent-soft: #23323c;
+  --code-bg:     #1b2023;
+  --good:        #5cc47c; --good-soft: #1c2f22;
+  --critical:    #de7c72;
+  --muted-line:  #5e666d;
+  --a-col: #6aa3ef; --a-soft: #1c2836;
+  --b-col: #d4bb4a; --b-soft: #332e14;
+  --c-col: #6bc79a; --c-soft: #1e2f26;
+  --warm-col: #d9a63f; --warm-soft: #332a17;
+}
+
+* { box-sizing: border-box; }
+*, *::before, *::after { border-radius: 0; }
+html { text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 18.5px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+::selection { background: var(--accent-soft); }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+
+header.hero {
+  border-bottom: 1px solid var(--line);
+  padding: 56px 0 38px;
+  background: var(--bg);
+}
+.eyebrow {
+  font-family: var(--sans); font-size: 14px; font-weight: 500;
+  color: var(--accent); margin: 0 0 14px;
+}
+.eyebrow a { color: inherit; }
+h1 {
+  font-family: var(--sans); font-size: clamp(26px, 3.6vw, 34px); line-height: 1.18;
+  letter-spacing: -0.02em; margin: 0 0 16px; text-wrap: balance; font-weight: 700;
+}
+.lede { font-size: 18.5px; line-height: 1.66; color: var(--ink-2); max-width: 640px; margin: 0; }
+
+main { padding: 42px 0 20px; }
+h2 {
+  font-family: var(--sans); font-size: 22px; font-weight: 700; letter-spacing: -0.01em;
+  margin: 48px 0 14px;
+}
+p { margin: 0 0 18px; max-width: 720px; }
+ul { max-width: 720px; }
+code { font-family: var(--mono); font-size: 0.87em; background: var(--code-bg); padding: 0.1em 0.35em; }
+.small-note { font-family: var(--sans); font-size: 13.5px; color: var(--ink-3); line-height: 1.6; }
+
+.diagram-figure { overflow-x: auto; margin: 22px 0; max-width: 720px; }
+.diagram-figure img { width: 100%; display: block; border: 1px solid var(--line); }
+figcaption { font-family: var(--sans); font-size: 13.5px; line-height: 1.6; color: var(--ink-3); margin-top: 10px; max-width: 720px; }
+
+.key { display: flex; flex-wrap: wrap; gap: 18px; margin: 6px 0 26px; font-family: var(--sans); font-size: 13.5px; }
+.key-item { display: flex; align-items: center; gap: 7px; color: var(--ink-2); }
+.key-sw { width: 13px; height: 13px; flex: none; }
+.key-sw.a { background: var(--a-col); }
+.key-sw.b { background: var(--b-col); }
+.key-sw.c { background: var(--c-col); }
+.key-sw.empty { background: none; border: 1px dashed var(--muted-line); }
+
+/* ---------------- widget ---------------- */
+.widget {
+  background: var(--surface); border: 1px solid var(--line);
+  padding: 22px 22px 24px; margin: 26px 0;
+}
+.widget-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 22px;
+}
+.pass-badge {
+  font-family: var(--sans); font-size: 12.5px; font-weight: 600; letter-spacing: 0.03em;
+  padding: 5px 11px; text-transform: uppercase;
+}
+.pass-badge.cold { background: var(--accent-soft); color: var(--accent); }
+.pass-badge.warm { background: var(--warm-soft); color: var(--warm-col); }
+.pass-badge.done { background: var(--good-soft); color: var(--good); }
+
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn {
+  font-family: var(--sans); font-size: 13.5px; font-weight: 500; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); padding: 7px 14px; cursor: pointer;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { opacity: 0.92; }
+
+/* two panels, side by side, stacking on narrow screens */
+.panels { display: flex; gap: 24px; flex-wrap: wrap; }
+.panel { flex: 1 1 430px; min-width: 360px; }
+.panel-title { font-family: var(--sans); font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+.panel-title-sub { font-weight: 500; font-size: 12.5px; color: var(--ink-3); }
+
+/* a "cell": one fixed 48x48 square, DRAM address in the top-left corner, real value centered.
+   Reused two places -- once as a matrix cell (.mcell), once nested inside a cache slot (.slot-occ) --
+   same exact size and look both places, so a value visibly IS the same cell whether it's sitting
+   in the matrix diagram or resident in the (larger, slot-indexed) cache box. */
+.cell-addr { position: absolute; top: 4px; left: 4px; font-size: 10px; line-height: 1; font-weight: 500; opacity: 0.75; }
+.cell-val { font-size: 14px; line-height: 1; font-weight: 700; }
+.mcell, .slot-occ {
+  width: 48px; height: 48px; flex: none;
+  display: flex; align-items: center; justify-content: center; font-family: var(--mono);
+  border: 1.5px solid transparent; color: var(--ink-3);
+  transition: border-color 0.12s, box-shadow 0.12s; font-weight: 500; position: relative;
+}
+.mcell { border-color: var(--line); background: var(--surface); }
+.mcell.a, .slot-occ.a { background: var(--a-soft); border-color: var(--a-col); color: var(--a-col); }
+.mcell.b, .slot-occ.b { background: var(--b-soft); border-color: var(--b-col); color: var(--b-col); }
+.mcell.cdata.done, .slot-occ.c { background: var(--c-soft); border-color: var(--c-col); color: var(--c-col); }
+
+/* full corner-block matmul diagram: B's whole 2x5 block on top, A's whole 3x2 block on the
+   left, C's 3x5 tiles filling the rest -- every A/B cell is its own indexed element, not a row/col label */
+.mgrid-wrap { margin: 0 0 16px; overflow-x: auto; }
+.mgrid { display: inline-grid; grid-template-columns: repeat(7, 48px); grid-auto-rows: 48px; gap: 4px; }
+.mcell.corner { border: none; background: none; }
+.mcell.active { box-shadow: inset 0 0 0 2px var(--accent); z-index: 1; }
+.mcell.a.active, .mcell.b.active, .mcell.cdata.active { border-color: var(--accent); }
+/* a "miss" -- fetched from DRAM this step, not already in cache -- wins over the active accent border */
+.mcell.a.miss, .mcell.b.miss { border-color: var(--critical); box-shadow: inset 0 0 0 2px var(--critical); }
+
+.cache-label { font-family: var(--sans); font-size: 11px; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 3px; }
+.cache-sub { font-family: var(--sans); font-size: 12px; color: var(--ink-3); margin-bottom: 10px; }
+.cache-row { display: grid; grid-template-columns: repeat(5, 70px); gap: 8px; margin-bottom: 14px; }
+.slot {
+  aspect-ratio: 1; border: 1.5px solid var(--muted-line); background: var(--surface); position: relative;
+  display: flex; align-items: center; justify-content: center;
+}
+.slot .slot-idx { position: absolute; top: 2px; left: 2px; font-size: 10px; line-height: 1; font-weight: 600; color: var(--ink-3); opacity: 0.8; z-index: 1; }
+.slot.just-changed .slot-occ { box-shadow: inset 0 0 0 2px var(--accent); border-color: var(--accent); }
+
+.fetch-stat { font-family: var(--sans); }
+.fetch-stat .n { font-family: var(--mono); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--critical); }
+.fetch-stat .k { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+
+/* ---------------- scoreboard ---------------- */
+.tbl-scroll { overflow-x: auto; margin: 22px 0; }
+table.score { border-collapse: collapse; width: 100%; font-family: var(--sans); font-size: 14.5px; }
+table.score th, table.score td {
+  border: 1px solid var(--line); padding: 9px 13px; text-align: right; font-variant-numeric: tabular-nums;
+}
+table.score th { font-weight: 600; color: var(--ink-2); background: var(--surface-2); text-align: center; }
+table.score td:first-child, table.score th:first-child { text-align: left; }
+table.score td.win { color: var(--good); font-weight: 700; }
+table.score td.pending { color: var(--ink-3); font-family: var(--serif); font-style: italic; font-weight: 400; }
+
+
+footer {
+  border-top: 1px solid var(--line); margin-top: 56px; padding: 30px 0 50px;
+  font-family: var(--sans); font-size: 14px; color: var(--ink-3);
+}
+footer .links { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; }
+footer a { color: var(--ink-2); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow"><a href="index.html">← vLLM kernel tuning</a> · side note</p>
+    <h1>The GROUP_SIZE_M Mystery</h1>
+    <p class="lede">A companion to the main blog post. This tries to reproduce the unexpected behaviour that the vLLM kernel config autotuner chooses row-major tile schedule ordering (GROUP_SIZE_M=1) instead of column-wise grouping when the GPU's L2 cache isn't flushed between consecutive kernel launches.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<h2>What <code>GROUP_SIZE_M</code> is for</h2>
+<p>The GEMM kernel analysed in the main blog article multiplies two matrices, <code>A</code> and <code>B</code>, into a third matrix <code>C</code>. The computation is split into tiles and the parameter <code>GROUP_SIZE_M</code> influences the order in which the tiles are scheduled. By grouping the output tiles into stripes of height <code>M</code>, we can tell the kernel to first schedule the tiles inside that group (top-to-bottom), before going to the next group. Setting <code>GROUP_SIZE_M=1</code> essentially means, that the height of the group is  1, resulting in the whole output matrix tiles being scheduled in a row by row order (row-major). For the other extreme, if we set <code>GROUP_SIZE_M</code> to the number of total tiles vertically, the whole output matrix tiles will be scheduled in a column by column order (column-major).</p>
+<p>Order matters because each tile reads a chunk of <code>A</code> and <code>B</code>, and based on how recent a chunk was used, it might still sit in L2 cache or might already have been evicted. The goal of <code>GROUP_SIZE_M</code> is trying to increase the number of elements which can be retrieved from the fast L2 cache (and reduce the calls to the much slower DRAM).</p>
+<p>Triton's matrix multiplication tutorial shows a concrete example: computing the first 9 output tiles of a 9x9 tile grid. Row-major sweeps them as a thin 1x9 strip — one row of <code>A</code>, but a different column of <code>B</code> for every tile, so all 9 B columns get loaded: 90 blocks total. Setting <code>GROUP_SIZE_M=3</code> would allow us to calculate the first 9 tiles with only 54 blocks needed thanks to more reuse. If the L2 cache happens to be smaller than what's needed for 90 blocks, this would result in the second strategy finishing faster than the first.</p>
+
+<figure class="diagram-figure">
+  <img src="grouped_vs_row_major_ordering.png" alt="Row-major ordering loads 9 blocks of A and 81 blocks of B (90 total) to compute the first 9 output tiles, as a 1x9 strip. Grouped ordering loads 27 blocks of A and 27 blocks of B (54 total) for the same 9 tiles, arranged as a 3x3 block instead." />
+  <figcaption>Row-major (top): 90 blocks needed to compute the first 9 output tiles. Grouped (bottom): 54 blocks needed to compute the first 9 output tiles. From the <a href="https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html#l2-cache-optimizations">Triton matmul tutorial</a>.</figcaption>
+</figure>
+
+<h2>In practice</h2>
+<p>With an empty L2 cache, this holds up in practice: grouped beats row-major, as expected. But vLLM's autotuner times candidates back-to-back without clearing the cache, so later ones run warm — and under that condition, row-major won instead.</p>
+
+<h2>Reproduce the unexpected result</h2>
+<p>To reproduce this in an easier to understand setting, I shrunk the size of <code>A</code>, <code>B</code>, <code>C</code>, and the cache down. <code>A</code> is a 3x2 matrix, <code>B</code> is a 2x5 matrix and the cache can store 13 elements at once. To further reduce the complexity, this example doesn't use any tiling. (<code>BLOCK_SIZE_M=1, BLOCK_SIZE_N=1, BLOCK_SIZE_K=2</code>).</p>
+<p>The two scenarios we want to compare are the two extremes <code>GROUP_SIZE_M=1</code> (row-major) and <code>GROUP_SIZE_M=3</code> (column-major).</p>
+<p>The first pass simulates the cold-cache scenario, and the second pass simulates the warm-cache scenario.</p>
+
+<div class="key">
+  <span class="key-item"><span class="key-sw a"></span>A — activations, 3×2</span>
+  <span class="key-item"><span class="key-sw b"></span>B — weights, 2×5</span>
+  <span class="key-item"><span class="key-sw c"></span>C — output, written not reused</span>
+</div>
+
+<div class="widget" id="widget">
+  <div class="widget-head">
+    <span class="pass-badge cold" id="pass-badge">cold pass</span>
+    <div class="controls">
+      <button class="btn primary" id="btn-step">Step →</button>
+      <button class="btn" id="btn-play">Play</button>
+      <button class="btn" id="btn-reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="panels">
+    <div class="panel" data-order="row">
+      <div class="panel-title">GROUP_SIZE_M=1 <span class="panel-title-sub">(row-major)</span></div>
+      <div class="cache-label">DRAM</div>
+      <div class="cache-sub">Every matrix element has a DRAM address, shown in the corner of its box.</div>
+      <div class="mgrid-wrap"><div class="mgrid" data-mgrid="row"></div></div>
+      <div class="cache-label">Direct-mapped cache</div>
+      <div class="cache-sub">To determine which slot gets used, calculate DRAM address mod 13.</div>
+      <div class="cache-row" data-cache="row"></div>
+      <div class="fetch-stat"><div class="n" data-fetch="row">0</div><div class="k">DRAM fetches this pass, lower is better</div></div>
+    </div>
+    <div class="panel" data-order="grouped">
+      <div class="panel-title">GROUP_SIZE_M=3 <span class="panel-title-sub">(column-major in this case)</span></div>
+      <div class="cache-label">DRAM</div>
+      <div class="cache-sub">Every matrix element has a DRAM address, shown in the corner of its box.</div>
+      <div class="mgrid-wrap"><div class="mgrid" data-mgrid="grouped"></div></div>
+      <div class="cache-label">Direct-mapped cache</div>
+      <div class="cache-sub">To determine which slot gets used, calculate DRAM address mod 13.</div>
+      <div class="cache-row" data-cache="grouped"></div>
+      <div class="fetch-stat"><div class="n" data-fetch="grouped">0</div><div class="k">DRAM fetches this pass, lower is better</div></div>
+    </div>
+  </div>
+
+  <div class="tbl-scroll">
+  <table class="score" id="score-table">
+    <thead><tr><th>pass</th><th>GROUP_SIZE_M=1</th><th>GROUP_SIZE_M=3</th></tr></thead>
+    <tbody>
+      <tr><td>cold</td><td class="pending" id="s-cold-row">—</td><td class="pending" id="s-cold-grp">—</td></tr>
+      <tr><td>warm</td><td class="pending" id="s-warm-row">—</td><td class="pending" id="s-warm-grp">—</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<p>Step through both and watch the counters. The real-world behaviour seems to be reproducible — grouped wins cold, row-major wins warm.</p>
+
+<h2>Honestly, I can't fully explain why</h2>
+<p>I can't yet give a clear explanation of why and under exactly what circumstances this effect happens but it seems to depend on:</p>
+<ul>
+  <li>How much smaller the cache is than everything moving through it in one pass.</li>
+  <li>The specific way DRAM addresses map onto cache slots. (Simple LRU doesn't work)</li>
+  <li>How and when the cache evicts things, not just its capacity.</li>
+  <li>The dimensions of <code>A</code> and <code>B</code>.</li>
+</ul>
+
+<p>If you have a intuitive way to explain this behaviour, please let me know.</p>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="index.html">← Back to the blog post</a>
+      <a href="https://github.com/leosch1/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning">Repo</a>
+    </div>
+    <span>Interactive trace built to make a verified cache simulation checkable by hand, not just asserted.</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  const M = 3, N = 5, K = 2, NUM_SETS = 13;
+  // Every individual number gets its own address: A flattened row-wise (A[m][k] = m*K+k),
+  // B flattened column-wise (B[k][n] = n*K+k) — so a whole row of A / column of B is contiguous.
+  const A_BASE = 0, B_BASE = M * K, C_BASE = M * K + N * K;
+  const TILES = M * N;
+  const TOTAL_STEPS = TILES * 2; // cold pass + warm pass, one step per tile
+
+  function aAddr(m, k) { return A_BASE + m * K + k; }
+  function bAddr(k, n) { return B_BASE + n * K + k; }
+  function cAddr(m, n) { return C_BASE + m * N + n; }
+
+  // The raw DRAM address, shown as-is everywhere -- so "address mod 13" is checkable by eye.
+  function nameOf(addr) { return String(addr); }
+  function kindOf(addr) {
+    if (addr < B_BASE) return "a";
+    if (addr < C_BASE) return "b";
+    return "c";
+  }
+
+  // Real, small matrices -- A is M x K, B is K x N (stored here per-column: BVALS[n] is B's n-th column).
+  const AVALS = [[2, -1], [0, 3], [-2, 4]];
+  const BVALS = [[1, 2], [-3, 0], [2, -1], [0, 4], [-2, 1]];
+  function dot(a, b) { return a.reduce((s, v, i) => s + v * b[i], 0); }
+  function cVal(m, n) { return dot(AVALS[m], BVALS[n]); }
+  function valueOf(addr) {
+    if (addr < B_BASE) { const off = addr - A_BASE; return AVALS[Math.floor(off / K)][off % K]; }
+    if (addr < C_BASE) { const off = addr - B_BASE; return BVALS[Math.floor(off / K)][off % K]; }
+    const off = addr - C_BASE; return cVal(Math.floor(off / N), off % N);
+  }
+  // Corner address + centered value -- the same markup used for a matrix cell and, when that
+  // address is resident, nested inside its cache slot, so it visibly looks like the same cell.
+  function cellInnerHtml(addr, val) {
+    return '<span class="cell-addr">' + addr + '</span><span class="cell-val">' + (val === null ? "" : val) + "</span>";
+  }
+
+  function seqFor(order) {
+    const seq = [];
+    if (order === "row") {
+      for (let m = 0; m < M; m++) for (let n = 0; n < N; n++) seq.push([m, n]);
+    } else {
+      for (let n = 0; n < N; n++) for (let m = 0; m < M; m++) seq.push([m, n]);
+    }
+    return seq;
+  }
+
+  // One event per TILE (not per touch): read A_m's K numbers and B_n's K numbers, write C(m,n).
+  // Cache hits are free; `fetches` counts only the DRAM trips a miss requires.
+  function buildTileTrace(order) {
+    const seq = seqFor(order);
+    const slots = new Array(NUM_SETS).fill(null);
+    const events = [];
+    ["cold", "warm"].forEach(pass => {
+      seq.forEach(([m, n], tupleIdx) => {
+        let fetches = 0;
+        const touched = [];
+        const missed = []; // addresses that were NOT already in cache -- actual DRAM fetches this tile
+        for (let k = 0; k < K; k++) {
+          const aA = aAddr(m, k), bA = bAddr(k, n);
+          const aSet = aA % NUM_SETS, bSet = bA % NUM_SETS;
+          if (slots[aSet] !== aA) { fetches++; missed.push(aA); }
+          slots[aSet] = aA; touched.push(aSet);
+          if (slots[bSet] !== bA) { fetches++; missed.push(bA); }
+          slots[bSet] = bA; touched.push(bSet);
+        }
+        const cA = cAddr(m, n), cSet = cA % NUM_SETS;
+        slots[cSet] = cA; touched.push(cSet); // write, not a fetch
+        events.push({ pass, tupleIdx, m, n, fetches, touched, missed, slots: slots.slice() });
+      });
+    });
+    return events;
+  }
+
+  const traces = { row: buildTileTrace("row"), grouped: buildTileTrace("grouped") };
+  const seqs = { row: seqFor("row"), grouped: seqFor("grouped") };
+
+  // ---- state: a single shared step counter drives BOTH panels in lockstep ----
+  let step = 0; // 0..TOTAL_STEPS
+  let playTimer = null;
+
+  const passBadgeEl = document.getElementById("pass-badge");
+  const btnStep = document.getElementById("btn-step");
+  const btnPlay = document.getElementById("btn-play");
+  const btnReset = document.getElementById("btn-reset");
+
+  const mgridEls = { row: document.querySelector('[data-mgrid="row"]'), grouped: document.querySelector('[data-mgrid="grouped"]') };
+  const cacheEls = { row: document.querySelector('[data-cache="row"]'), grouped: document.querySelector('[data-cache="grouped"]') };
+  const fetchEls = { row: document.querySelector('[data-fetch="row"]'), grouped: document.querySelector('[data-fetch="grouped"]') };
+
+  function tupleIdxFor(order, m, n) {
+    return seqs[order].findIndex(([mm, nn]) => mm === m && nn === n);
+  }
+
+  function buildMgrid(order) {
+    const el = mgridEls[order];
+    // Full corner-block matmul diagram, K+N columns x K+M rows:
+    //   top-left  (K x K)   empty corner
+    //   top-right (K x N)   B, in full -- every element, by its raw DRAM address
+    //   bot-left  (M x K)   A, in full -- every element, by its raw DRAM address
+    //   bot-right (M x N)   C -- 15 output tiles, each by its raw DRAM address; fill/border marks which are already computed
+    el.innerHTML = "";
+    function cell(cls, html, dataset) {
+      const div = document.createElement("div");
+      div.className = cls;
+      div.innerHTML = html;
+      if (dataset) for (const k in dataset) div.dataset[k] = dataset[k];
+      el.appendChild(div);
+    }
+    for (let k = 0; k < K; k++) {
+      for (let a = 0; a < K; a++) cell("mcell corner", "");
+      for (let n = 0; n < N; n++) {
+        // tagged with its column (bcol) so it can be highlighted whenever a tile in that column is active
+        cell("mcell b", cellInnerHtml(bAddr(k, n), BVALS[n][k]), { bcol: n, addr: bAddr(k, n) });
+      }
+    }
+    for (let m = 0; m < M; m++) {
+      for (let k = 0; k < K; k++) {
+        // tagged with its row (arow) so it can be highlighted whenever a tile in that row is active
+        cell("mcell a", cellInnerHtml(aAddr(m, k), AVALS[m][k]), { arow: m, addr: aAddr(m, k) });
+      }
+      for (let n = 0; n < N; n++) {
+        // C's address is always shown; its value is revealed once that tile is actually computed.
+        cell("mcell cdata", cellInnerHtml(cAddr(m, n), null), { m, n });
+      }
+    }
+  }
+
+  function buildCache(order) {
+    const el = cacheEls[order];
+    el.innerHTML = "";
+    for (let i = 0; i < NUM_SETS; i++) {
+      const div = document.createElement("div");
+      div.className = "slot";
+      div.innerHTML = '<span class="slot-idx">' + i + '</span><div class="slot-occ"></div>';
+      el.appendChild(div);
+    }
+  }
+
+  function renderOrder(order) {
+    const events = traces[order];
+    const played = events.slice(0, step);
+    const last = played.length ? played[played.length - 1] : null;
+    const slots = last ? last.slots : new Array(NUM_SETS).fill(null);
+    const curPass = step === 0 ? "cold" : (step <= TILES ? "cold" : "warm");
+
+    // addresses that had to be fetched from DRAM on the last step (empty if that step was a different pass)
+    const missedSet = new Set(last && last.pass === curPass ? last.missed : []);
+
+    // cache slots -- the occupant is rendered as a small copy of its source matrix cell
+    const slotEls = cacheEls[order].children;
+    slots.forEach((addr, i) => {
+      const el = slotEls[i];
+      el.className = "slot" + (last && last.touched.includes(i) ? " just-changed" : "");
+      const occEl = el.querySelector(".slot-occ");
+      if (addr !== null) {
+        occEl.className = "slot-occ " + kindOf(addr);
+        occEl.innerHTML = cellInnerHtml(addr, valueOf(addr));
+      } else {
+        occEl.className = "slot-occ";
+        occEl.innerHTML = "";
+      }
+    });
+
+    // matrix grid: which tiles are done in the current pass, and which just completed
+    const passEvents = played.filter(e => e.pass === curPass);
+    const doneTuples = new Set(passEvents.map(e => e.tupleIdx));
+    const justDone = last && last.pass === curPass ? last.tupleIdx : null;
+    mgridEls[order].querySelectorAll(".mcell.cdata").forEach(el => {
+      const m = +el.dataset.m, n = +el.dataset.n;
+      const t = tupleIdxFor(order, m, n);
+      const isDone = doneTuples.has(t);
+      el.classList.toggle("done", isDone);
+      el.classList.toggle("active", t === justDone);
+      el.querySelector(".cell-val").textContent = isDone ? cVal(m, n) : "";
+    });
+    // also highlight the exact row of A and column of B that fed the just-completed tile
+    const activeMN = justDone !== null ? seqs[order][justDone] : null;
+    mgridEls[order].querySelectorAll(".mcell.a").forEach(el => {
+      el.classList.toggle("active", !!activeMN && +el.dataset.arow === activeMN[0]);
+      el.classList.toggle("miss", missedSet.has(+el.dataset.addr));
+    });
+    mgridEls[order].querySelectorAll(".mcell.b").forEach(el => {
+      el.classList.toggle("active", !!activeMN && +el.dataset.bcol === activeMN[1]);
+      el.classList.toggle("miss", missedSet.has(+el.dataset.addr));
+    });
+
+    // DRAM fetches this pass so far
+    const fetchesThisPass = passEvents.reduce((s, e) => s + e.fetches, 0);
+    fetchEls[order].textContent = fetchesThisPass;
+  }
+
+  function render() {
+    renderOrder("row");
+    renderOrder("grouped");
+
+    if (step === 0) { passBadgeEl.textContent = "cold pass"; passBadgeEl.className = "pass-badge cold"; }
+    else if (step < TILES) { passBadgeEl.textContent = "cold pass"; passBadgeEl.className = "pass-badge cold"; }
+    else if (step < TOTAL_STEPS) { passBadgeEl.textContent = "warm pass"; passBadgeEl.className = "pass-badge warm"; }
+    else { passBadgeEl.textContent = "done"; passBadgeEl.className = "pass-badge done"; }
+
+    btnStep.disabled = step >= TOTAL_STEPS;
+    btnPlay.disabled = step >= TOTAL_STEPS;
+    if (step >= TOTAL_STEPS) stopPlay();
+
+    updateScoreboard();
+  }
+
+  function doStep() {
+    if (step >= TOTAL_STEPS) return;
+    step++;
+    render();
+  }
+
+  function stopPlay() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null; btnPlay.textContent = "Play"; }
+  }
+  function togglePlay() {
+    if (playTimer) { stopPlay(); return; }
+    btnPlay.textContent = "Pause";
+    playTimer = setInterval(() => {
+      if (step >= TOTAL_STEPS) { stopPlay(); return; }
+      doStep();
+    }, 480);
+  }
+
+  function updateScoreboard() {
+    const rows = {
+      cold: { min: 0, max: TILES, row: document.getElementById("s-cold-row"), grp: document.getElementById("s-cold-grp") },
+      warm: { min: TILES, max: TOTAL_STEPS, row: document.getElementById("s-warm-row"), grp: document.getElementById("s-warm-grp") }
+    };
+    ["cold", "warm"].forEach(pass => {
+      const r = rows[pass];
+      if (step < r.max) return;
+      const rowTotal = traces.row.slice(r.min, r.max).reduce((s, e) => s + e.fetches, 0);
+      const grpTotal = traces.grouped.slice(r.min, r.max).reduce((s, e) => s + e.fetches, 0);
+      r.row.textContent = rowTotal + (rowTotal < grpTotal ? " (winner)" : "");
+      r.grp.textContent = grpTotal + (grpTotal < rowTotal ? " (winner)" : "");
+      r.row.classList.remove("pending"); r.grp.classList.remove("pending");
+      r.row.classList.toggle("win", rowTotal < grpTotal);
+      r.grp.classList.toggle("win", grpTotal < rowTotal);
+    });
+  }
+
+  btnStep.addEventListener("click", () => { stopPlay(); doStep(); });
+  btnPlay.addEventListener("click", togglePlay);
+  btnReset.addEventListener("click", () => { stopPlay(); step = 0; render(); });
+
+  buildMgrid("row");
+  buildMgrid("grouped");
+  buildCache("row");
+  buildCache("grouped");
+  render();
+})();
+</script>
+
+</body>
+</html>
