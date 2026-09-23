@@ -735,7 +735,7 @@ Config file not found at .../configs/N=17408,K=5120,device_name=NVIDIA_L40S,dtyp
     <p class="chart-sub">Higher is better. Filled = exact tuned batch size matched. Ring = using nearest batch-size.</p>
     <div class="chart-wrap" id="chart-mean-speedup"></div>
   </div>
-  <p>A big improvement for small batch sizes: Roughly 62% at the smallest batch sizes, meaning that the kernel takes 38% of the time it would need using the default config. As the batch size grows, the performance improvement gets smaller (but importantly never significantly negative). A probable explanation for the smaller improvement for bigger batch sizes is the <code>BLOCK_SIZE_M</code> parameter. The default config sets it to 64, no matter the batch size. For a batch size of <code>M=1</code> this leads to 63/64 rows of tiles to be wasted, but the wasted amount is lower for bigger batch sizes. The tuned config sets the <code>BLOCK_SIZE_M</code> closer to the actual batch size:</p>
+  <p>A big improvement for small batch sizes: 62% at the smallest batch size, meaning that the kernel takes 38% of the time it would need using the default config. As the batch size grows, the performance improvement gets smaller (but importantly never significantly negative). A probable explanation for the smaller improvement for bigger batch sizes is the <code>BLOCK_SIZE_M</code> parameter. The default config sets it to 64, no matter the batch size. For a batch size of <code>M=1</code> this leads to 63/64 rows of tiles to be wasted, but the wasted amount is lower for bigger batch sizes. The tuned config sets the <code>BLOCK_SIZE_M</code> closer to the actual batch size:</p>
 
   <ul class="tight">
     <li><code>M=1</code> → <code>BLOCK_SIZE_M=16</code></li>
