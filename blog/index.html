@@ -323,7 +323,7 @@ footer .links { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 18
   <div class="wrap">
     <p class="eyebrow">Kernel tuning investigation: Qwen3.8-27B-FP8 on NVIDIA L40S</p>
     <h1>I made vLLM's kernel config faster.<br>It made real serving slower.</h1>
-    <p class="lede">To improve the performance of Qwen3.8-27B-FP8 running on two NVIDIA L40S GPUs, I ran vLLM's config autotuning script for the block-FP8 GEMM kernel. This resulted in the kernel being up to 62% faster in isolation, and 28% more tok/s for low-concurrency serving. But surprisingly: For high-concurrency serving, the tuned config performed worse than the default. This summary explains how I found the reason for that behaviour (L2 cache assumption) and how the fix made the win hold everywhere.</p>
+    <p class="lede">To improve the performance of Qwen3.8-27B-FP8 running on two NVIDIA L40S GPUs, I ran vLLM's config autotuning script for the block-FP8 GEMM kernel. This resulted in the kernel being up to 62% faster in isolation, and 28% more tok/s for low-concurrency serving. But surprisingly: For high-concurrency serving, the tuned config performed worse than the default. This summary explains how I found the reason for that behaviour (L2 cache assumption) and how I fixed it so that the win holds everywhere.</p>
     <div class="meta">
       <span><a href="https://github.com/leosch1">@leosch1</a></span>
       <span><code>Qwen/Qwen3.8-27B-FP8</code></span>
