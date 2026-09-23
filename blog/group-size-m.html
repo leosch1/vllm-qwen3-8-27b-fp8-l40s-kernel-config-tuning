@@ -99,11 +99,12 @@ a:focus-visible, button:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-.wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+.wide { max-width: 960px; margin: 0 auto; padding: 0 24px; }
 
 header.hero {
   border-bottom: 1px solid var(--line);
-  padding: 56px 0 38px;
+  padding: 76px 0 46px;
   background: var(--bg);
 }
 .eyebrow {
@@ -112,18 +113,18 @@ header.hero {
 }
 .eyebrow a { color: inherit; }
 h1 {
-  font-family: var(--sans); font-size: clamp(26px, 3.6vw, 34px); line-height: 1.18;
-  letter-spacing: -0.02em; margin: 0 0 16px; text-wrap: balance; font-weight: 700;
+  font-family: var(--sans); font-size: clamp(28px, 4vw, 40px); line-height: 1.16;
+  letter-spacing: -0.02em; margin: 0 0 18px; text-wrap: balance; font-weight: 700;
 }
-.lede { font-size: 18.5px; line-height: 1.66; color: var(--ink-2); max-width: 640px; margin: 0; }
+.lede { font-size: 19.5px; line-height: 1.66; color: var(--ink-2); max-width: 640px; margin: 0 0 26px; }
 
-main { padding: 42px 0 20px; }
+section { padding: 58px 0; }
 h2 {
-  font-family: var(--sans); font-size: 22px; font-weight: 700; letter-spacing: -0.01em;
-  margin: 48px 0 14px;
+  font-family: var(--sans); font-size: 25px; font-weight: 600;
+  line-height: 1.26; margin: 0 0 14px; letter-spacing: -0.017em; text-wrap: balance;
 }
-p { margin: 0 0 18px; max-width: 720px; }
-ul { max-width: 720px; }
+p { margin: 0 0 18px; max-width: 68ch; }
+ul { max-width: 68ch; }
 code { font-family: var(--mono); font-size: 0.87em; background: var(--code-bg); padding: 0.1em 0.35em; }
 .small-note { font-family: var(--sans); font-size: 13.5px; color: var(--ink-3); line-height: 1.6; }
 
@@ -168,7 +169,7 @@ figcaption { font-family: var(--sans); font-size: 13.5px; line-height: 1.6; colo
 
 /* two panels, side by side, stacking on narrow screens */
 .panels { display: flex; gap: 24px; flex-wrap: wrap; }
-.panel { flex: 1 1 430px; min-width: 360px; }
+.panel { flex: 1 1 380px; min-width: 260px; max-width: 100%; }
 .panel-title { font-family: var(--sans); font-weight: 700; font-size: 15px; margin-bottom: 12px; }
 .panel-title-sub { font-weight: 500; font-size: 12.5px; color: var(--ink-3); }
 
@@ -201,7 +202,7 @@ figcaption { font-family: var(--sans); font-size: 13.5px; line-height: 1.6; colo
 
 .cache-label { font-family: var(--sans); font-size: 11px; color: var(--ink-3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 3px; }
 .cache-sub { font-family: var(--sans); font-size: 12px; color: var(--ink-3); margin-bottom: 10px; }
-.cache-row { display: grid; grid-template-columns: repeat(5, 70px); gap: 8px; margin-bottom: 14px; }
+.cache-row { display: grid; grid-template-columns: repeat(5, 70px); gap: 8px; margin-bottom: 14px; overflow-x: auto; }
 .slot {
   aspect-ratio: 1; border: 1.5px solid var(--muted-line); background: var(--surface); position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -225,11 +226,8 @@ table.score td.win { color: var(--good); font-weight: 700; }
 table.score td.pending { color: var(--ink-3); font-family: var(--serif); font-style: italic; font-weight: 400; }
 
 
-footer {
-  border-top: 1px solid var(--line); margin-top: 56px; padding: 30px 0 50px;
-  font-family: var(--sans); font-size: 14px; color: var(--ink-3);
-}
-footer .links { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; }
+footer { padding: 44px 0 84px; font-size: 15px; color: var(--ink-3); }
+footer .links { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 18px; font-family: var(--mono); font-size: 12.5px; }
 footer a { color: var(--ink-2); }
 </style>
 </head>
@@ -243,8 +241,10 @@ footer a { color: var(--ink-2); }
   </div>
 </header>
 
-<main class="wrap">
+<main>
 
+<section>
+<div class="wrap">
 <h2>What <code>GROUP_SIZE_M</code> is for</h2>
 <p>The GEMM kernel analysed in the main blog article multiplies two matrices, <code>A</code> and <code>B</code>, into a third matrix <code>C</code>. The computation is split into tiles and the parameter <code>GROUP_SIZE_M</code> influences the order in which the tiles are scheduled. By grouping the output tiles into stripes of height <code>M</code>, we can tell the kernel to first schedule the tiles inside that group (top-to-bottom), before going to the next group. Setting <code>GROUP_SIZE_M=1</code> essentially means, that the height of the group is  1, resulting in the whole output matrix tiles being scheduled in a row by row order (row-major). For the other extreme, if we set <code>GROUP_SIZE_M</code> to the number of total tiles vertically, the whole output matrix tiles will be scheduled in a column by column order (column-major).</p>
 <p>Order matters because each tile reads a chunk of <code>A</code> and <code>B</code>, and based on how recent a chunk was used, it might still sit in L2 cache or might already have been evicted. The goal of <code>GROUP_SIZE_M</code> is trying to increase the number of elements which can be retrieved from the fast L2 cache (and reduce the calls to the much slower DRAM).</p>
@@ -268,7 +268,9 @@ footer a { color: var(--ink-2); }
   <span class="key-item"><span class="key-sw b"></span>B — weights, 2×5</span>
   <span class="key-item"><span class="key-sw c"></span>C — output, written not reused</span>
 </div>
+</div>
 
+<div class="wide">
 <div class="widget" id="widget">
   <div class="widget-head">
     <span class="pass-badge cold" id="pass-badge">cold pass</span>
@@ -312,7 +314,9 @@ footer a { color: var(--ink-2); }
   </table>
   </div>
 </div>
+</div>
 
+<div class="wrap">
 <p>Step through both and watch the counters. The real-world behaviour seems to be reproducible — grouped wins cold, row-major wins warm.</p>
 
 <h2>Honestly, I can't fully explain why</h2>
@@ -325,16 +329,14 @@ footer a { color: var(--ink-2); }
 </ul>
 
 <p>If you have a intuitive way to explain this behaviour, please let me know.</p>
+</div></section>
 
 </main>
 
-<footer>
-  <div class="wrap">
-    <div class="links">
-      <a href="index.html">← Back to the blog post</a>
-      <a href="https://github.com/leosch1/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning">Repo</a>
-    </div>
-    <span>Interactive trace built to make a verified cache simulation checkable by hand, not just asserted.</span>
+<footer class="wrap">
+  <div class="links">
+    <a href="index.html">← Back to the blog post</a>
+    <a href="https://github.com/leosch1/vllm-qwen3-8-27b-fp8-l40s-kernel-config-tuning">Repo</a>
   </div>
 </footer>
 
